@@ -5,12 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 export 'package:llama_cpp_dart/llama_cpp_dart.dart'
-    show
-        PromptFormat,
-        ChatMLFormat,
-        GemmaChatFormat,
-        MistralChatFormat,
-        Llama2ChatFormat;
+    show PromptFormat, ChatMLFormat, AlpacaFormat, GemmaFormat;
+export 'package:llama_cpp_dart/src/harmony_format.dart';
+export 'package:llama_cpp_dart/src/prompt_format.dart';
 
 class Llmcpp {
   final PromptFormat? promptFormat;
@@ -71,7 +68,9 @@ class Llmcpp {
 
   void _initLibs() {
     if (Platform.isAndroid) {
-      Llama.libraryPath = 'libmtmd.so';
+      // images?
+      // Llama.libraryPath = 'libmtmd.so';
+      Llama.libraryPath = 'libllama.so';
     } else if (Platform.isLinux) {
       try {
         final libs = [
@@ -90,6 +89,10 @@ class Llmcpp {
         if (kDebugMode) print('ggml preload failed (continuing): $e');
       }
       Llama.libraryPath = 'libmtmd.so';
+      //       Llama.libraryPath = 'libllama.so';
+      //     } else if (Platform.isIOS || Platform.isMacOS) {
+      //       // iOS/macOS uses xcframework, no need to set path
+      //       if (kDebugMode) print('Using bundled llama.xcframework');
     }
   }
 
@@ -124,13 +127,89 @@ class Llmcpp {
           ..topK = _topKDefault
           ..topP = _topPDefault
           ..penaltyRepeat = _penaltyRepeatDefault,
-        // format: ChatMLFormat(),
       );
 
       llamaParent = LlamaParent(loadCommand);
       await llamaParent?.init();
     } catch (e, s) {
       print('Error in _loadIsolated: $e');
+    }
+  }
+
+  Future<void> loadModel(String localPath) async {
+    if (!File(localPath).existsSync()) {
+      throw FileSystemException('File not found', localPath);
+    }
+
+    final modelParams = ModelParams()..nGpuLayers = _nGpuLayersDefault;
+
+    final contextParams = ContextParams()
+      ..nPredict = _nPredictDefault
+      ..nCtx = _nCtxDefault
+      ..nBatch = _nBatchDefault
+      ..nThreads = _nThreadsDefault;
+    _ctx.nCtx = contextParams.nCtx;
+    final samplerParams = SamplerParams()
+      ..temp = _tempDefault
+      ..topK = _topKDefault
+      ..topP = _topPDefault
+      ..penaltyRepeat = _penaltyRepeatDefault;
+
+    final localMMProjPath = null;
+    try {
+      llama = Llama(
+        localPath,
+        modelParams,
+        contextParams,
+        samplerParams,
+        // modelParams: modelParams,
+        // contextParams: contextParams,
+        // samplerParams: samplerParams,
+      );
+    } catch (e, stack) {
+      print(stack);
+      print(e);
+      llama = null;
+      return;
+    }
+
+    try {
+      final remaining = llama!.getRemainingContextSpace();
+      final used = (_nCtx - remaining).clamp(0, _nCtx);
+    } catch (_) {}
+  }
+
+  Stream<String>? sendPrompt(String prompt) async* {
+    if (llama == null || _promptFormatDefault == null) {
+      return;
+    }
+
+    final formattedPrompt = _promptFormatDefault!.formatPrompt(prompt);
+
+    llama!.setPrompt(formattedPrompt);
+
+    // return llama!.generateText();
+
+    final buffer = StringBuffer();
+    final stopwatch = Stopwatch()..start();
+    const yieldInterval = Duration(milliseconds: 50);
+
+    await for (final token in llama!.generateText()) {
+      buffer.write(token);
+
+      if (stopwatch.elapsed >= yieldInterval) {
+        if (buffer.isNotEmpty) {
+          yield buffer.toString();
+          buffer.clear();
+        }
+
+        stopwatch.reset();
+        await Future.delayed(Duration.zero);
+      }
+    }
+
+    if (buffer.isNotEmpty) {
+      yield buffer.toString();
     }
   }
 }

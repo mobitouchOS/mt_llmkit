@@ -28,10 +28,10 @@ class _MyAppState extends State<MyApp> {
   );
 
   final _modelUrl =
-      'https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q4_K_M.gguf';
+      'https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf';
   String? modelPath;
   TextEditingController controller = TextEditingController(
-    text: '<s>[INST] What is the capital of France? [/INST]',
+    text: 'What is capital of Poland?',
   );
   String text = 'Initial text';
   bool modelFileExists = false;
@@ -185,7 +185,6 @@ class _MyAppState extends State<MyApp> {
                     });
                   });
 
-                  // _llmcppPlugin = Llmcpp();
                   // await _llmcppPlugin.loadModel(modelPath!);
                   // _llmcppPlugin.sendPrompt(controller.text)?.listen((event) {
                   //   setState(() {
