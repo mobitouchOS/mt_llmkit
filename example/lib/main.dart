@@ -153,7 +153,7 @@ class _MyAppState extends State<MyApp> {
                               const Text('Downloading model...'),
                               Text('${downloadProgress.toStringAsFixed(2)} %'),
                               CircularProgressIndicator(
-                                value: downloadProgress,
+                                value: downloadProgress / 100,
                               ),
                             ],
                           )
