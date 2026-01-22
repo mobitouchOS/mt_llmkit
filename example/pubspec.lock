@@ -134,10 +134,10 @@ packages:
     dependency: transitive
     description:
       name: image
-      sha256: "4e973fcf4caae1a4be2fa0a13157aa38a8f9cb049db6529aa00b4d71abc4d928"
+      sha256: "492bd52f6c4fbb6ee41f781ff27765ce5f627910e1e0cbecfa3d9add5562604c"
       url: "https://pub.dev"
     source: hosted
-    version: "4.5.4"
+    version: "4.7.2"
   integration_test:
     dependency: "direct dev"
     description: flutter
@@ -179,10 +179,10 @@ packages:
     dependency: transitive
     description:
       name: llama_cpp_dart
-      sha256: "26671b778b7617f0ca46239c11f7e11f29b39d4026ab99938950df986ebf9df7"
+      sha256: "8bfc902fb6ef80ec0a2d06d5cdb499364271f9a6c6f11623ca9d7b4488fa7a98"
       url: "https://pub.dev"
     source: hosted
-    version: "0.1.2+1"
+    version: "0.2.2"
   llmcpp:
     dependency: "direct main"
     description:

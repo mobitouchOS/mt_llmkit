@@ -159,12 +159,12 @@ class Llmcpp {
     try {
       llama = Llama(
         localPath,
-        modelParams,
-        contextParams,
-        samplerParams,
-        // modelParams: modelParams,
-        // contextParams: contextParams,
-        // samplerParams: samplerParams,
+        // modelParams,
+        // contextParams,
+        // samplerParams,
+        modelParams: modelParams,
+        contextParams: contextParams,
+        samplerParams: samplerParams,
       );
     } catch (e, stack) {
       print(stack);
