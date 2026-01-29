@@ -1,29 +1,37 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llmcpp/llmcpp.dart';
-import 'package:llmcpp/llmcpp_platform_interface.dart';
-import 'package:llmcpp/llmcpp_method_channel.dart';
-import 'package:plugin_platform_interface/plugin_platform_interface.dart';
-
-class MockLlmcppPlatform
-    with MockPlatformInterfaceMixin
-    implements LlmcppPlatform {
-
-  @override
-  Future<String?> getPlatformVersion() => Future.value('42');
-}
 
 void main() {
-  final LlmcppPlatform initialPlatform = LlmcppPlatform.instance;
+  group('llmcpp package exports', () {
+    test('should export LlmConfig', () {
+      const config = LlmConfig();
+      expect(config, isNotNull);
+    });
 
-  test('$MethodChannelLlmcpp is the default instance', () {
-    expect(initialPlatform, isInstanceOf<MethodChannelLlmcpp>());
-  });
+    test('should export LlmInterface', () {
+      expect(LlmInterface, isNotNull);
+    });
 
-  test('getPlatformVersion', () async {
-    Llmcpp llmcppPlugin = Llmcpp();
-    MockLlmcppPlatform fakePlatform = MockLlmcppPlatform();
-    LlmcppPlatform.instance = fakePlatform;
+    test('should export LlmModelBase', () {
+      expect(LlmModelBase, isNotNull);
+    });
 
-    expect(await llmcppPlugin.getPlatformVersion(), '42');
+    test('should export LlmModelStandard', () {
+      final model = LlmModelStandard(const LlmConfig());
+      expect(model, isNotNull);
+      model.dispose();
+    });
+
+    test('should export LlmModelIsolated', () {
+      final model = LlmModelIsolated(const LlmConfig());
+      expect(model, isNotNull);
+      model.dispose();
+    });
+
+    test('should export PromptFormat classes', () {
+      expect(ChatMLFormat(), isNotNull);
+      expect(AlpacaFormat(), isNotNull);
+      expect(GemmaFormat(), isNotNull);
+    });
   });
 }

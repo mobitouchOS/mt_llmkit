@@ -1,0 +1,200 @@
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:llmcpp/llmcpp.dart';
+
+void main() {
+  group('Integration Tests - Complete Workflow', () {
+    test('should create, configure and dispose standard model', () {
+      const config = LlmConfig(nGpuLayers: 32, nCtx: 4096, temp: 0.7);
+
+      final model = LlmModelStandard(config);
+
+      expect(model.isInitialized, false);
+      expect(model.isDisposed, false);
+
+      model.dispose();
+
+      expect(model.isDisposed, true);
+    });
+
+    test('should create, configure and dispose isolated model', () {
+      const config = LlmConfig(nGpuLayers: 32, nCtx: 4096, temp: 0.7);
+
+      final model = LlmModelIsolated(config);
+
+      expect(model.isInitialized, false);
+      expect(model.isDisposed, false);
+
+      model.dispose();
+
+      expect(model.isDisposed, true);
+    });
+
+    test('should handle multiple models simultaneously', () {
+      final model1 = LlmModelStandard(const LlmConfig());
+      final model2 = LlmModelIsolated(const LlmConfig());
+
+      expect(model1.isInitialized, false);
+      expect(model2.isInitialized, false);
+
+      model1.dispose();
+      model2.dispose();
+
+      expect(model1.isDisposed, true);
+      expect(model2.isDisposed, true);
+    });
+
+    test('should work with different prompt formats', () {
+      final models = [
+        LlmModelStandard(LlmConfig(promptFormat: ChatMLFormat())),
+        LlmModelStandard(LlmConfig(promptFormat: AlpacaFormat())),
+        LlmModelStandard(LlmConfig(promptFormat: GemmaFormat())),
+        LlmModelIsolated(LlmConfig(promptFormat: ChatMLFormat())),
+        LlmModelIsolated(LlmConfig(promptFormat: AlpacaFormat())),
+        LlmModelIsolated(LlmConfig(promptFormat: GemmaFormat())),
+      ];
+
+      for (final model in models) {
+        expect(model, isNotNull);
+        expect(model.isInitialized, false);
+        model.dispose();
+        expect(model.isDisposed, true);
+      }
+    });
+
+    test('should respect configuration parameters', () {
+      const lowResource = LlmConfig(
+        nGpuLayers: 0,
+        nCtx: 512,
+        nBatch: 128,
+        nThreads: 2,
+      );
+
+      const highResource = LlmConfig(
+        nGpuLayers: 64,
+        nCtx: 8192,
+        nBatch: 4096,
+        nThreads: 8,
+      );
+
+      final lowModel = LlmModelStandard(lowResource);
+      final highModel = LlmModelStandard(highResource);
+
+      expect(lowModel, isNotNull);
+      expect(highModel, isNotNull);
+
+      lowModel.dispose();
+      highModel.dispose();
+    });
+  });
+
+  group('Integration Tests - Error Handling', () {
+    test('should handle file not found gracefully', () {
+      final model = LlmModelStandard(const LlmConfig());
+
+      expect(
+        () => model.loadModel('/definitely/not/existing/model.gguf'),
+        throwsA(isA<FileSystemException>()),
+      );
+    });
+
+    test('should prevent operations on disposed model', () {
+      final model = LlmModelStandard(const LlmConfig());
+      model.dispose();
+
+      expect(() => model.loadModel('/test.gguf'), throwsStateError);
+      expect(() => model.sendPrompt('test'), throwsStateError);
+      expect(() => model.clean(), throwsStateError);
+    });
+
+    test('should prevent operations before initialization', () {
+      final model = LlmModelStandard(const LlmConfig());
+
+      expect(() => model.sendPrompt('test'), throwsStateError);
+      expect(() => model.clean(), throwsStateError);
+    });
+  });
+
+  group('Integration Tests - LlmInterface Compliance', () {
+    test('all models should implement LlmInterface', () {
+      final standard = LlmModelStandard(const LlmConfig());
+      final isolated = LlmModelIsolated(const LlmConfig());
+
+      expect(standard, isA<LlmInterface>());
+      expect(isolated, isA<LlmInterface>());
+    });
+
+    test('all models should extend LlmModelBase', () {
+      final standard = LlmModelStandard(const LlmConfig());
+      final isolated = LlmModelIsolated(const LlmConfig());
+
+      expect(standard, isA<LlmModelBase>());
+      expect(isolated, isA<LlmModelBase>());
+    });
+
+    test('all models should have consistent state management', () {
+      final models = <LlmModelBase>[
+        LlmModelStandard(const LlmConfig()),
+        LlmModelIsolated(const LlmConfig()),
+      ];
+
+      for (final model in models) {
+        // Initial state
+        expect(model.isInitialized, false);
+        expect(model.isDisposed, false);
+
+        // After dispose
+        model.dispose();
+        expect(model.isInitialized, false);
+        expect(model.isDisposed, true);
+      }
+    });
+  });
+
+  group('Integration Tests - Configuration Variations', () {
+    test('should work with minimal configuration', () {
+      const config = LlmConfig(nCtx: 128, nBatch: 32, nThreads: 1);
+
+      final model = LlmModelStandard(config);
+      expect(model, isNotNull);
+      model.dispose();
+    });
+
+    test('should work with maximum configuration', () {
+      const config = LlmConfig(
+        nGpuLayers: 99,
+        nCtx: 32768,
+        nBatch: 8192,
+        nPredict: 32768,
+        nThreads: 16,
+        temp: 2.0,
+        topK: 100,
+        topP: 1.0,
+        penaltyRepeat: 2.0,
+      );
+
+      final model = LlmModelStandard(config);
+      expect(model, isNotNull);
+      model.dispose();
+    });
+
+    test('should handle edge case values', () {
+      const config = LlmConfig(
+        nGpuLayers: 0,
+        nCtx: 1,
+        nBatch: 1,
+        nPredict: 1,
+        nThreads: 1,
+        temp: 0.0,
+        topK: 1,
+        topP: 0.0,
+        penaltyRepeat: 0.0,
+      );
+
+      final model = LlmModelStandard(config);
+      expect(model, isNotNull);
+      model.dispose();
+    });
+  });
+}
