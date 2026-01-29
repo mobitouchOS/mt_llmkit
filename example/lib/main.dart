@@ -17,14 +17,16 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  Llmcpp _llmcppPlugin = Llmcpp(
-    temp: 0.7,
-    nGpuLayers: 4,
-    nCtx: 2048,
-    nThreads: 4,
-    nPredict: 256,
-    topP: 0.9,
-    penaltyRepeat: 1.1,
+  final LlmModelIsolated _llmcppPlugin = LlmModelIsolated(
+    LlmConfig(
+      temp: 0.7,
+      nGpuLayers: 4,
+      nCtx: 2048,
+      nThreads: 4,
+      nPredict: 256,
+      topP: 0.9,
+      penaltyRepeat: 1.1,
+    ),
   );
 
   final _modelUrl =
@@ -176,10 +178,8 @@ class _MyAppState extends State<MyApp> {
                   setState(() {
                     text = 'Generating...';
                   });
-                  await _llmcppPlugin.loadIsolated(modelPath!);
-                  _llmcppPlugin.sendPromptIsolated(controller.text)?.listen((
-                    event,
-                  ) {
+                  await _llmcppPlugin.loadModel(modelPath!);
+                  _llmcppPlugin.sendPrompt(controller.text)?.listen((event) {
                     setState(() {
                       text = text + event;
                     });

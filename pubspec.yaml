@@ -1,7 +1,8 @@
 name: llmcpp
 description: "A new Flutter project."
 version: 0.0.1
-homepage:
+publish_to: none
+homepage: none
 
 environment:
   sdk: ^3.10.0
@@ -14,7 +15,6 @@ dependencies:
     sdk: flutter
   web: ^1.0.0
   plugin_platform_interface: ^2.0.2
-#  llama_cpp_dart: ^0.1.2+1
   llama_cpp_dart: ^0.2.2
 
 
