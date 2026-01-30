@@ -1,10 +1,13 @@
 // lib/src/models/llm_model_standard.dart
+import 'dart:async';
 import 'dart:io';
 
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
+import 'package:llmcpp/src/utils/llm_utils.dart';
 
 import '../../llmcpp.dart';
 import '../native/library_loader.dart';
+import '../utils/llm_utils.dart';
 
 class LlmModelStandard extends LlmModelBase {
   final LlmConfig config;
@@ -73,6 +76,45 @@ class LlmModelStandard extends LlmModelBase {
     if (buffer.isNotEmpty) {
       yield buffer.toString();
     }
+  }
+
+  @override
+  Stream<StreamingChunk> sendPromptStream(String prompt) async* {
+    checkInitialized();
+
+    final startTime = DateTime.now();
+    final formattedPrompt = config.promptFormatDefault.formatPrompt(prompt);
+    int totalTokenCount = 0;
+
+    _llama!.setPrompt(formattedPrompt);
+
+    await for (final chunk in _llama!.generateText()) {
+      // Count actual tokens in the chunk (approximate: split by whitespace and punctuation)
+      // Each chunk may contain multiple tokens
+      final tokensInChunk = LlmUtils.estimateTokenCount(chunk);
+      totalTokenCount += tokensInChunk;
+
+      final currentTime = DateTime.now();
+
+      // Calculate current metrics
+      final metrics = PerformanceMetrics.fromGeneration(
+        tokenCount: totalTokenCount,
+        startTime: startTime,
+        endTime: currentTime,
+      );
+
+      yield StreamingChunk(text: chunk, metrics: metrics, isFinal: false);
+    }
+
+    // Send final chunk with final metrics
+    final endTime = DateTime.now();
+    final finalMetrics = PerformanceMetrics.fromGeneration(
+      tokenCount: totalTokenCount,
+      startTime: startTime,
+      endTime: endTime,
+    );
+
+    yield StreamingChunk(text: '', metrics: finalMetrics, isFinal: true);
   }
 
   @override

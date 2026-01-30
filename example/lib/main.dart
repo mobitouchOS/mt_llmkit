@@ -40,6 +40,10 @@ class _MyAppState extends State<MyApp> {
   bool isDownloading = false;
   double downloadProgress = 0;
 
+  // Performance metrics
+  String performanceMetrics = '';
+  bool showMetrics = true;
+
   @override
   void initState() {
     super.initState();
@@ -47,7 +51,9 @@ class _MyAppState extends State<MyApp> {
 
   @override
   void dispose() {
-    _llmcppPlugin.clean();
+    if (_llmcppPlugin.isInitialized) {
+      _llmcppPlugin.clean();
+    }
     _llmcppPlugin.dispose();
     controller.dispose();
     super.dispose();
@@ -132,18 +138,65 @@ class _MyAppState extends State<MyApp> {
                         height: 60,
                         child: TextField(
                           controller: controller,
-                          decoration: InputDecoration(
+                          decoration: const InputDecoration(
                             hintText: 'Enter prompt...',
                           ),
                         ),
                       ),
                     ),
                     const Divider(),
+                    // Performance metrics display
+                    if (performanceMetrics.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.blue.withOpacity(0.3),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(
+                                    Icons.speed,
+                                    size: 20,
+                                    color: Colors.blue,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    '⚡ Performance Metrics (Live)',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                      color: Colors.blue,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                performanceMetrics,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     Expanded(
                       child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(16),
                         child: Text(
-                          text,
-                          style: Theme.of(context).textTheme.headlineMedium,
+                          text.isEmpty ? 'Press send to generate...' : text,
+                          style: Theme.of(context).textTheme.bodyLarge,
                         ),
                       ),
                     ),
@@ -176,21 +229,42 @@ class _MyAppState extends State<MyApp> {
             ? FloatingActionButton(
                 onPressed: () async {
                   setState(() {
-                    text = 'Generating...';
-                  });
-                  await _llmcppPlugin.loadModel(modelPath!);
-                  _llmcppPlugin.sendPrompt(controller.text)?.listen((event) {
-                    setState(() {
-                      text = text + event;
-                    });
+                    text = '';
+                    performanceMetrics = '';
                   });
 
-                  // await _llmcppPlugin.loadModel(modelPath!);
-                  // _llmcppPlugin.sendPrompt(controller.text)?.listen((event) {
-                  //   setState(() {
-                  //     text = text + event;
-                  //   });
-                  // });
+                  await _llmcppPlugin.loadModel(modelPath!);
+
+                  // Use streaming with live metrics
+                  _llmcppPlugin
+                      .sendPromptStream(controller.text)
+                      .listen(
+                        (chunk) {
+                          setState(() {
+                            // Append text from chunk
+                            if (chunk.text.isNotEmpty) {
+                              text = text + chunk.text;
+                            }
+
+                            // Update metrics in real-time
+                            if (chunk.metrics != null) {
+                              final m = chunk.metrics!;
+                              performanceMetrics =
+                                  '''
+Tokens Generated: ${m.tokensGenerated}
+Duration: ${m.durationMs}ms
+Speed: ${m.tokensPerSecond.toStringAsFixed(2)} t/s
+Time per token: ${m.msPerToken.toStringAsFixed(2)}ms
+''';
+                            }
+                          });
+                        },
+                        onError: (error) {
+                          setState(() {
+                            text = 'Error: $error';
+                          });
+                        },
+                      );
                 },
                 tooltip: 'Generate',
                 child: const Icon(Icons.send),

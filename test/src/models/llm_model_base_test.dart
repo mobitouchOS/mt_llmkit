@@ -36,6 +36,52 @@ class MockLlmModel extends LlmModelBase {
   }
 
   @override
+  Future<GenerationResult> sendPromptWithMetrics(String prompt) async {
+    checkInitialized();
+    _sendPromptCalled = true;
+    _lastPrompt = prompt;
+
+    final startTime = DateTime.now();
+    final text = 'Mock response for: $prompt';
+    final endTime = DateTime.now();
+
+    final metrics = PerformanceMetrics.fromGeneration(
+      tokenCount: 10,
+      startTime: startTime,
+      endTime: endTime,
+    );
+
+    return GenerationResult.success(text: text, metrics: metrics);
+  }
+
+  @override
+  Stream<StreamingChunk> sendPromptStream(String prompt) async* {
+    checkInitialized();
+    _sendPromptCalled = true;
+    _lastPrompt = prompt;
+
+    final startTime = DateTime.now();
+    final text = 'Mock response for: $prompt';
+
+    // Simulate streaming with metrics
+    for (var i = 0; i < text.length; i += 5) {
+      final chunk = text.substring(i, (i + 5).clamp(0, text.length));
+      final currentTime = DateTime.now();
+      final metrics = PerformanceMetrics.fromGeneration(
+        tokenCount: i ~/ 5 + 1,
+        startTime: startTime,
+        endTime: currentTime,
+      );
+
+      yield StreamingChunk(
+        text: chunk,
+        metrics: metrics,
+        isFinal: i + 5 >= text.length,
+      );
+    }
+  }
+
+  @override
   void dispose() {
     _disposeCalled = true;
     markAsDisposed();

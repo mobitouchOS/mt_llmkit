@@ -32,8 +32,9 @@ void main() {
       expect(find.text('Download Model'), findsOneWidget);
       expect(find.byType(ElevatedButton), findsOneWidget);
 
-      // TextField and FAB should not be visible
+      // TextField, Switch and FAB should not be visible
       expect(find.byType(TextField), findsNothing);
+      expect(find.byType(Switch), findsNothing);
       expect(find.byType(FloatingActionButton), findsNothing);
     });
 
