@@ -31,6 +31,12 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
+  # RAG: wybór pliku (PDF, TXT) z systemu plików
+  file_picker: ^8.1.2
+
+  # RAG: ekstrakcja tekstu z plików PDF (bezpłatna licencja community)
+  syncfusion_flutter_pdf: ^27.1.48
+
 dev_dependencies:
   integration_test:
     sdk: flutter

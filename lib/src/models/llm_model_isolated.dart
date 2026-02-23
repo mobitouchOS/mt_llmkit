@@ -2,7 +2,6 @@
 import 'dart:io';
 
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
-import 'package:llmcpp/src/utils/llm_utils.dart';
 
 import '../../llmcpp.dart';
 import '../native/library_loader.dart';

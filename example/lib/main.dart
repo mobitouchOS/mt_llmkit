@@ -1,3 +1,5 @@
+// example/lib/main.dart
+
 import 'dart:async';
 import 'dart:io';
 
@@ -5,271 +7,391 @@ import 'package:flutter/material.dart';
 import 'package:llmcpp/llmcpp.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'rag_page.dart';
+
 void main() {
   runApp(const MyApp());
 }
 
-class MyApp extends StatefulWidget {
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
-  State<MyApp> createState() => _MyAppState();
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'llmcpp Demo',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        useMaterial3: true,
+      ),
+      home: const MainPage(),
+    );
+  }
 }
 
-class _MyAppState extends State<MyApp> {
-  final LlmModelIsolated _llmcppPlugin = LlmModelIsolated(
-    LlmConfig(
-      temp: 0.7,
-      nGpuLayers: 4,
-      nCtx: 2048,
-      nThreads: 4,
-      nPredict: 256,
-      topP: 0.9,
-      penaltyRepeat: 1.1,
-    ),
-  );
+// ── Nawigacja główna ────────────────────────────────────────────────────────
 
-  final _modelUrl =
+class MainPage extends StatefulWidget {
+  const MainPage({super.key});
+
+  @override
+  State<MainPage> createState() => _MainPageState();
+}
+
+class _MainPageState extends State<MainPage> {
+  int _selectedIndex = 0;
+
+  static const _pages = [LlmDemoPage(), RagPage()];
+
+  static const _labels = [
+    NavigationDestination(icon: Icon(Icons.chat_outlined), selectedIcon: Icon(Icons.chat), label: 'LLM'),
+    NavigationDestination(icon: Icon(Icons.search_outlined), selectedIcon: Icon(Icons.search), label: 'RAG'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        title: Text(_selectedIndex == 0 ? 'llmcpp — LLM Demo' : 'llmcpp — RAG Demo'),
+      ),
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: _pages,
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (i) => setState(() => _selectedIndex = i),
+        destinations: _labels,
+      ),
+    );
+  }
+}
+
+// ── Strona LLM (bez zmian, wydzielona do osobnej klasy) ────────────────────
+
+enum ProviderType { localGGUF, openAI }
+
+class LlmDemoPage extends StatefulWidget {
+  const LlmDemoPage({super.key});
+
+  @override
+  State<LlmDemoPage> createState() => _LlmDemoPageState();
+}
+
+class _LlmDemoPageState extends State<LlmDemoPage> {
+  LlmPlugin? _plugin;
+  StreamSubscription<StreamingChunk>? _streamSubscription;
+
+  ProviderType _selectedProvider = ProviderType.localGGUF;
+  String? _modelPath;
+  bool _isDownloading = false;
+  double _downloadProgress = 0;
+  bool _isModelReady = false;
+  bool _isGenerating = false;
+
+  final StringBuffer _outputBuffer = StringBuffer();
+  String _output = '';
+  String _metricsText = '';
+  String _statusMessage = '';
+
+  final _promptController = TextEditingController(
+    text: 'Jaka jest stolica Polski? Opisz ją w 2 zdaniach.',
+  );
+  final _apiKeyController = TextEditingController();
+  final _scrollController = ScrollController();
+
+  static const _modelUrl =
       'https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf';
-  String? modelPath;
-  TextEditingController controller = TextEditingController(
-    text: 'What is capital of Poland?',
-  );
-  String text = 'Initial text';
-  bool modelFileExists = false;
-  bool isDownloading = false;
-  double downloadProgress = 0;
-
-  // Performance metrics
-  String performanceMetrics = '';
-  bool showMetrics = true;
 
   @override
   void initState() {
     super.initState();
+    _checkModelExists();
   }
 
   @override
   void dispose() {
-    if (_llmcppPlugin.isInitialized) {
-      _llmcppPlugin.clean();
-    }
-    _llmcppPlugin.dispose();
-    controller.dispose();
+    _streamSubscription?.cancel();
+    _plugin?.dispose();
+    _promptController.dispose();
+    _apiKeyController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  Future<String?> _downloadFile() async {
-    try {
-      final pathDirectory = await getApplicationDocumentsDirectory();
-      if (File('${pathDirectory.path}/model.gguf').existsSync()) {
-        setState(() {
-          modelFileExists = true;
-        });
-        return '${pathDirectory.path}/model.gguf';
-      }
+  Future<void> _checkModelExists() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final file = File('${dir.path}/model.gguf');
+    if (file.existsSync()) {
       setState(() {
-        isDownloading = true;
+        _modelPath = file.path;
+        _isModelReady = true;
+        _statusMessage = 'Model gotowy: Llama-3.2-1B-Instruct Q4_K_M';
       });
+    }
+  }
+
+  Future<void> _downloadModel() async {
+    setState(() {
+      _isDownloading = true;
+      _downloadProgress = 0;
+      _statusMessage = 'Pobieranie modelu...';
+    });
+
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final filePath = '${dir.path}/model.gguf';
       final httpClient = HttpClient();
       final request = await httpClient.getUrl(Uri.parse(_modelUrl));
       final response = await request.close();
 
       if (response.statusCode == 200) {
         final contentLength = response.contentLength;
-        final filePath = '${pathDirectory.path}/model.gguf';
         final file = File(filePath);
         final sink = file.openWrite();
-
         int downloadedBytes = 0;
 
-        await for (var chunk in response) {
+        await for (final chunk in response) {
           sink.add(chunk);
           downloadedBytes += chunk.length;
-
           if (contentLength > 0) {
-            final progress = (downloadedBytes / contentLength * 100);
             setState(() {
-              downloadProgress = progress;
+              _downloadProgress = downloadedBytes / contentLength;
+              _statusMessage = 'Pobieranie: ${(_downloadProgress * 100).toStringAsFixed(1)}%';
             });
           }
         }
 
         await sink.close();
-        if (File('${pathDirectory.path}/model.gguf').existsSync()) {
-          setState(() {
-            modelFileExists = true;
-          });
-        }
-
         setState(() {
-          isDownloading = false;
+          _modelPath = filePath;
+          _isModelReady = true;
+          _isDownloading = false;
+          _statusMessage = 'Model pobrany pomyślnie';
         });
-        return filePath;
       } else {
-        print('File downloading error: ${response.statusCode}');
-        return null;
+        throw HttpException('HTTP ${response.statusCode}');
       }
     } catch (e) {
       setState(() {
-        isDownloading = false;
+        _isDownloading = false;
+        _statusMessage = '';
       });
-      print('Exception during file download: $e');
-      return null;
+      _showError('Błąd pobierania: $e');
     }
+  }
+
+  Future<bool> _initializePlugin() async {
+    await _plugin?.dispose();
+    _plugin = null;
+
+    try {
+      switch (_selectedProvider) {
+        case ProviderType.localGGUF:
+          _plugin = LlmPlugin.localGGUF(
+            modelPath: _modelPath!,
+            config: const LlmConfig(temp: 0.7, nGpuLayers: 4, nCtx: 2048, nBatch: 512, nThreads: 4, nPredict: 256),
+          );
+        case ProviderType.openAI:
+          _plugin = LlmPlugin.openAI(apiKey: _apiKeyController.text, model: 'gpt-4o-mini');
+      }
+      await _plugin!.initialize();
+      return true;
+    } on UnimplementedError catch (e) {
+      _showError('${e.message}');
+      _plugin = null;
+      return false;
+    } catch (e) {
+      _showError('Błąd inicjalizacji: $e');
+      _plugin = null;
+      return false;
+    }
+  }
+
+  Future<void> _sendPrompt() async {
+    if (_isGenerating) return;
+    setState(() {
+      _isGenerating = true;
+      _output = '';
+      _metricsText = '';
+      _statusMessage = 'Inicjalizowanie...';
+      _outputBuffer.clear();
+    });
+
+    if (_plugin == null || !_plugin!.isInitialized) {
+      final success = await _initializePlugin();
+      if (!success) {
+        setState(() => _isGenerating = false);
+        return;
+      }
+    }
+
+    setState(() => _statusMessage = 'Generowanie...');
+
+    _streamSubscription = _plugin!.sendPromptStream(_promptController.text).listen(
+      (chunk) {
+        setState(() {
+          if (chunk.text.isNotEmpty) {
+            _outputBuffer.write(chunk.text);
+            _output = _outputBuffer.toString();
+          }
+          if (chunk.metrics != null) {
+            final m = chunk.metrics!;
+            _metricsText = 'Tokeny: ${m.tokensGenerated} │ ${m.tokensPerSecond.toStringAsFixed(1)} t/s │ ${m.msPerToken.toStringAsFixed(0)} ms/token';
+          }
+          if (chunk.isFinal) {
+            _isGenerating = false;
+            _statusMessage = 'Gotowe';
+          }
+        });
+      },
+      onError: (Object error) {
+        setState(() {
+          _output = 'Błąd: $error';
+          _isGenerating = false;
+          _statusMessage = 'Błąd';
+        });
+      },
+      onDone: () {
+        if (mounted) setState(() => _isGenerating = false);
+      },
+    );
+  }
+
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red.shade700),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(
-          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-          title: Text('Example'),
-        ),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: .center,
-            children: modelFileExists
-                ? [
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: SizedBox(
-                        height: 60,
-                        child: TextField(
-                          controller: controller,
-                          decoration: const InputDecoration(
-                            hintText: 'Enter prompt...',
-                          ),
-                        ),
-                      ),
-                    ),
-                    const Divider(),
-                    // Performance metrics display
-                    if (performanceMetrics.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: Colors.blue.withOpacity(0.3),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Row(
-                                children: [
-                                  Icon(
-                                    Icons.speed,
-                                    size: 20,
-                                    color: Colors.blue,
-                                  ),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    '⚡ Performance Metrics (Live)',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                      color: Colors.blue,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                performanceMetrics,
-                                style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                          text.isEmpty ? 'Press send to generate...' : text,
-                          style: Theme.of(context).textTheme.bodyLarge,
-                        ),
-                      ),
-                    ),
-                  ]
-                : [
-                    isDownloading
-                        ? Column(
-                            children: [
-                              const Text('Downloading model...'),
-                              Text('${downloadProgress.toStringAsFixed(2)} %'),
-                              CircularProgressIndicator(
-                                value: downloadProgress / 100,
-                              ),
-                            ],
-                          )
-                        : ElevatedButton(
-                            onPressed: () async {
-                              _downloadFile().then((path) {
-                                setState(() {
-                                  modelPath = path;
-                                });
-                              });
-                            },
-                            child: const Text('Download Model'),
-                          ),
-                  ],
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: SegmentedButton<ProviderType>(
+            segments: const [
+              ButtonSegment(value: ProviderType.localGGUF, label: Text('Lokalny GGUF'), icon: Icon(Icons.computer)),
+              ButtonSegment(value: ProviderType.openAI, label: Text('OpenAI (szkielet)'), icon: Icon(Icons.cloud_outlined)),
+            ],
+            selected: {_selectedProvider},
+            onSelectionChanged: (selected) {
+              setState(() {
+                _selectedProvider = selected.first;
+                _plugin?.dispose();
+                _plugin = null;
+              });
+            },
           ),
         ),
-        floatingActionButton: modelFileExists
-            ? FloatingActionButton(
-                onPressed: () async {
-                  setState(() {
-                    text = '';
-                    performanceMetrics = '';
-                  });
+        if (_selectedProvider == ProviderType.localGGUF)
+          _buildLocalGGUFSection()
+        else
+          _buildOpenAISection(),
+        const Divider(height: 1),
+        if (_isModelReady || _selectedProvider == ProviderType.openAI)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: TextField(
+              controller: _promptController,
+              maxLines: 3,
+              minLines: 1,
+              decoration: const InputDecoration(labelText: 'Prompt', border: OutlineInputBorder()),
+            ),
+          ),
+        if (_metricsText.isNotEmpty)
+          Container(
+            color: Colors.blue.shade50,
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: Text(_metricsText, style: TextStyle(fontSize: 11, color: Colors.blue.shade700, fontFamily: 'monospace')),
+          ),
+        Expanded(
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_output.isNotEmpty)
+                  SelectableText(_output, style: Theme.of(context).textTheme.bodyLarge)
+                else if (!_isGenerating && _isModelReady)
+                  Text('Naciśnij ▶ aby wygenerować...', style: TextStyle(color: Colors.grey.shade400)),
+                if (_isGenerating)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        if (_statusMessage.isNotEmpty)
+          Container(
+            color: Colors.grey.shade100,
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Text(_statusMessage, style: const TextStyle(fontSize: 11, color: Colors.black54)),
+          ),
+      ],
+    );
+  }
 
-                  await _llmcppPlugin.loadModel(modelPath!);
+  Widget _buildLocalGGUFSection() {
+    if (_isModelReady) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.green.shade600, size: 18),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Llama-3.2-1B-Instruct Q4_K_M', style: TextStyle(fontSize: 13))),
+            if (_isGenerating)
+              IconButton(icon: const Icon(Icons.stop_circle_outlined), onPressed: () async {
+                await _streamSubscription?.cancel();
+                setState(() => _isGenerating = false);
+              })
+            else
+              IconButton(icon: const Icon(Icons.send), onPressed: _sendPrompt),
+          ],
+        ),
+      );
+    }
+    if (_isDownloading) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Pobieranie: ${(_downloadProgress * 100).toStringAsFixed(1)}%', style: const TextStyle(fontSize: 13)),
+            const SizedBox(height: 6),
+            LinearProgressIndicator(value: _downloadProgress),
+          ],
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: ElevatedButton.icon(onPressed: _downloadModel, icon: const Icon(Icons.download), label: const Text('Pobierz model GGUF (~800MB)')),
+    );
+  }
 
-                  // Use streaming with live metrics
-                  _llmcppPlugin
-                      .sendPromptStream(controller.text)
-                      .listen(
-                        (chunk) {
-                          setState(() {
-                            // Append text from chunk
-                            if (chunk.text.isNotEmpty) {
-                              text = text + chunk.text;
-                            }
-
-                            // Update metrics in real-time
-                            if (chunk.metrics != null) {
-                              final m = chunk.metrics!;
-                              performanceMetrics =
-                                  '''
-Tokens Generated: ${m.tokensGenerated}
-Duration: ${m.durationMs}ms
-Speed: ${m.tokensPerSecond.toStringAsFixed(2)} t/s
-Time per token: ${m.msPerToken.toStringAsFixed(2)}ms
-''';
-                            }
-                          });
-                        },
-                        onError: (error) {
-                          setState(() {
-                            text = 'Error: $error';
-                          });
-                        },
-                      );
-                },
-                tooltip: 'Generate',
-                child: const Icon(Icons.send),
-              )
-            : null,
+  Widget _buildOpenAISection() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Column(
+        children: [
+          TextField(
+            controller: _apiKeyController,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: 'OpenAI API Key', hintText: 'sk-...', prefixIcon: Icon(Icons.key), border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 6),
+          const Text('Szkielet — metody rzucają UnimplementedError.', style: TextStyle(fontSize: 11, color: Colors.orange)),
+        ],
       ),
     );
   }
