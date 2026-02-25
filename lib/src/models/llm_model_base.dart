@@ -6,9 +6,14 @@ import '../core/llm_interface.dart';
 abstract class LlmModelBase implements LlmInterface {
   bool _isInitialized = false;
   bool _isDisposed = false;
+  bool _isGenerating = false;
 
+  @override
   bool get isInitialized => _isInitialized;
   bool get isDisposed => _isDisposed;
+
+  @override
+  bool get isGenerating => _isGenerating;
 
   @protected
   void markAsInitialized() {
@@ -19,6 +24,17 @@ abstract class LlmModelBase implements LlmInterface {
   void markAsDisposed() {
     _isDisposed = true;
     _isInitialized = false;
+    _isGenerating = false;
+  }
+
+  @protected
+  void markGenerationStart() {
+    _isGenerating = true;
+  }
+
+  @protected
+  void markGenerationEnd() {
+    _isGenerating = false;
   }
 
   @protected

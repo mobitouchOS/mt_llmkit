@@ -44,8 +44,16 @@ class _MainPageState extends State<MainPage> {
   static const _pages = [LlmDemoPage(), RagPage()];
 
   static const _labels = [
-    NavigationDestination(icon: Icon(Icons.chat_outlined), selectedIcon: Icon(Icons.chat), label: 'LLM'),
-    NavigationDestination(icon: Icon(Icons.search_outlined), selectedIcon: Icon(Icons.search), label: 'RAG'),
+    NavigationDestination(
+      icon: Icon(Icons.chat_outlined),
+      selectedIcon: Icon(Icons.chat),
+      label: 'LLM',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.search_outlined),
+      selectedIcon: Icon(Icons.search),
+      label: 'RAG',
+    ),
   ];
 
   @override
@@ -53,12 +61,11 @@ class _MainPageState extends State<MainPage> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(_selectedIndex == 0 ? 'llmcpp — LLM Demo' : 'llmcpp — RAG Demo'),
+        title: Text(
+          _selectedIndex == 0 ? 'llmcpp — LLM Demo' : 'llmcpp — RAG Demo',
+        ),
       ),
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _pages,
-      ),
+      body: IndexedStack(index: _selectedIndex, children: _pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: (i) => setState(() => _selectedIndex = i),
@@ -68,7 +75,7 @@ class _MainPageState extends State<MainPage> {
   }
 }
 
-// ── LLM page (extracted to a separate class) ─────────────────────────────────
+// ── LLM page ──────────────────────────────────────────────────────────────────
 
 enum ProviderType { localGGUF, openAI }
 
@@ -80,7 +87,8 @@ class LlmDemoPage extends StatefulWidget {
 }
 
 class _LlmDemoPageState extends State<LlmDemoPage> {
-  LlmPlugin? _plugin;
+  GgufPlugin? _ggufPlugin;
+  OpenAIProvider? _openAIProvider;
   StreamSubscription<StreamingChunk>? _streamSubscription;
 
   ProviderType _selectedProvider = ProviderType.localGGUF;
@@ -113,7 +121,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
   @override
   void dispose() {
     _streamSubscription?.cancel();
-    _plugin?.dispose();
+    _ggufPlugin?.dispose();
     _promptController.dispose();
     _apiKeyController.dispose();
     _scrollController.dispose();
@@ -158,7 +166,8 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
           if (contentLength > 0) {
             setState(() {
               _downloadProgress = downloadedBytes / contentLength;
-              _statusMessage = 'Downloading: ${(_downloadProgress * 100).toStringAsFixed(1)}%';
+              _statusMessage =
+                  'Downloading: ${(_downloadProgress * 100).toStringAsFixed(1)}%';
             });
           }
         }
@@ -182,29 +191,17 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
     }
   }
 
-  Future<bool> _initializePlugin() async {
-    await _plugin?.dispose();
-    _plugin = null;
+  Future<bool> _initializeGguf() async {
+    _ggufPlugin?.dispose();
+    _ggufPlugin = null;
 
     try {
-      switch (_selectedProvider) {
-        case ProviderType.localGGUF:
-          _plugin = LlmPlugin.localGGUF(
-            modelPath: _modelPath!,
-            config: const LlmConfig(temp: 0.7, nGpuLayers: 4, nCtx: 2048, nBatch: 512, nThreads: 4, nPredict: 256),
-          );
-        case ProviderType.openAI:
-          _plugin = LlmPlugin.openAI(apiKey: _apiKeyController.text, model: 'gpt-4o-mini');
-      }
-      await _plugin!.initialize();
+      _ggufPlugin = GgufPlugin(backend: GGUFBackend.isolate);
+      await _ggufPlugin!.loadModel(_modelPath!);
       return true;
-    } on UnimplementedError catch (e) {
-      _showError('${e.message}');
-      _plugin = null;
-      return false;
     } catch (e) {
       _showError('Initialization error: $e');
-      _plugin = null;
+      _ggufPlugin = null;
       return false;
     }
   }
@@ -219,8 +216,17 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
       _outputBuffer.clear();
     });
 
-    if (_plugin == null || !_plugin!.isInitialized) {
-      final success = await _initializePlugin();
+    switch (_selectedProvider) {
+      case ProviderType.localGGUF:
+        await _sendGgufPrompt();
+      case ProviderType.openAI:
+        await _sendOpenAIPrompt();
+    }
+  }
+
+  Future<void> _sendGgufPrompt() async {
+    if (_ggufPlugin == null || !_ggufPlugin!.isInitialized) {
+      final success = await _initializeGguf();
       if (!success) {
         setState(() => _isGenerating = false);
         return;
@@ -229,34 +235,58 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
 
     setState(() => _statusMessage = 'Generating...');
 
-    _streamSubscription = _plugin!.sendPromptStream(_promptController.text).listen(
-      (chunk) {
-        setState(() {
-          if (chunk.text.isNotEmpty) {
-            _outputBuffer.write(chunk.text);
-            _output = _outputBuffer.toString();
-          }
-          if (chunk.metrics != null) {
-            final m = chunk.metrics!;
-            _metricsText = 'Tokens: ${m.tokensGenerated} │ ${m.tokensPerSecond.toStringAsFixed(1)} t/s │ ${m.msPerToken.toStringAsFixed(0)} ms/token';
-          }
-          if (chunk.isFinal) {
-            _isGenerating = false;
-            _statusMessage = 'Done';
-          }
-        });
-      },
-      onError: (Object error) {
-        setState(() {
-          _output = 'Error: $error';
-          _isGenerating = false;
-          _statusMessage = 'Error';
-        });
-      },
-      onDone: () {
-        if (mounted) setState(() => _isGenerating = false);
-      },
-    );
+    _streamSubscription = _ggufPlugin!
+        .sendPromptStream(_promptController.text)
+        .listen(
+          (chunk) {
+            setState(() {
+              if (chunk.text.isNotEmpty) {
+                _outputBuffer.write(chunk.text);
+                _output = _outputBuffer.toString();
+              }
+              if (chunk.metrics != null) {
+                final m = chunk.metrics!;
+                _metricsText =
+                    'Tokens: ${m.tokensGenerated} │ ${m.tokensPerSecond.toStringAsFixed(1)} t/s │ ${m.msPerToken.toStringAsFixed(0)} ms/token';
+              }
+              if (chunk.isFinal) {
+                _isGenerating = false;
+                _statusMessage = 'Done';
+              }
+            });
+          },
+          onError: (Object error) {
+            setState(() {
+              _output = 'Error: $error';
+              _isGenerating = false;
+              _statusMessage = 'Error';
+            });
+          },
+          onDone: () {
+            if (mounted) {
+              setState(() {
+                _isGenerating = false;
+                if (_statusMessage == 'Generating...') _statusMessage = 'Done';
+              });
+            }
+          },
+        );
+  }
+
+  Future<void> _sendOpenAIPrompt() async {
+    try {
+      _openAIProvider ??= OpenAIProvider();
+      await _openAIProvider!.initialize({
+        'apiKey': _apiKeyController.text,
+        'model': 'gpt-4o-mini',
+      });
+    } on UnimplementedError catch (e) {
+      _showError('${e.message}');
+      setState(() => _isGenerating = false);
+    } catch (e) {
+      _showError('OpenAI error: $e');
+      setState(() => _isGenerating = false);
+    }
   }
 
   void _showError(String message) {
@@ -274,15 +304,23 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           child: SegmentedButton<ProviderType>(
             segments: const [
-              ButtonSegment(value: ProviderType.localGGUF, label: Text('Local GGUF'), icon: Icon(Icons.computer)),
-              ButtonSegment(value: ProviderType.openAI, label: Text('OpenAI (skeleton)'), icon: Icon(Icons.cloud_outlined)),
+              ButtonSegment(
+                value: ProviderType.localGGUF,
+                label: Text('Local GGUF'),
+                icon: Icon(Icons.computer),
+              ),
+              ButtonSegment(
+                value: ProviderType.openAI,
+                label: Text('OpenAI (skeleton)'),
+                icon: Icon(Icons.cloud_outlined),
+              ),
             ],
             selected: {_selectedProvider},
             onSelectionChanged: (selected) {
               setState(() {
                 _selectedProvider = selected.first;
-                _plugin?.dispose();
-                _plugin = null;
+                _ggufPlugin?.dispose();
+                _ggufPlugin = null;
               });
             },
           ),
@@ -299,7 +337,10 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
               controller: _promptController,
               maxLines: 3,
               minLines: 1,
-              decoration: const InputDecoration(labelText: 'Prompt', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                labelText: 'Prompt',
+                border: OutlineInputBorder(),
+              ),
             ),
           ),
         if (_metricsText.isNotEmpty)
@@ -307,7 +348,14 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
             color: Colors.blue.shade50,
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            child: Text(_metricsText, style: TextStyle(fontSize: 11, color: Colors.blue.shade700, fontFamily: 'monospace')),
+            child: Text(
+              _metricsText,
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.blue.shade700,
+                fontFamily: 'monospace',
+              ),
+            ),
           ),
         Expanded(
           child: SingleChildScrollView(
@@ -317,13 +365,23 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (_output.isNotEmpty)
-                  SelectableText(_output, style: Theme.of(context).textTheme.bodyLarge)
+                  SelectableText(
+                    _output,
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  )
                 else if (!_isGenerating && _isModelReady)
-                  Text('Press ▶ to generate...', style: TextStyle(color: Colors.grey.shade400)),
+                  Text(
+                    'Press ▶ to generate...',
+                    style: TextStyle(color: Colors.grey.shade400),
+                  ),
                 if (_isGenerating)
                   const Padding(
                     padding: EdgeInsets.only(top: 12),
-                    child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
                   ),
               ],
             ),
@@ -334,7 +392,10 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
             color: Colors.grey.shade100,
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Text(_statusMessage, style: const TextStyle(fontSize: 11, color: Colors.black54)),
+            child: Text(
+              _statusMessage,
+              style: const TextStyle(fontSize: 11, color: Colors.black54),
+            ),
           ),
       ],
     );
@@ -348,12 +409,20 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
           children: [
             Icon(Icons.check_circle, color: Colors.green.shade600, size: 18),
             const SizedBox(width: 8),
-            const Expanded(child: Text('Llama-3.2-1B-Instruct Q4_K_M', style: TextStyle(fontSize: 13))),
+            const Expanded(
+              child: Text(
+                'Llama-3.2-1B-Instruct Q4_K_M',
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
             if (_isGenerating)
-              IconButton(icon: const Icon(Icons.stop_circle_outlined), onPressed: () async {
-                await _streamSubscription?.cancel();
-                setState(() => _isGenerating = false);
-              })
+              IconButton(
+                icon: const Icon(Icons.stop_circle_outlined),
+                onPressed: () async {
+                  await _streamSubscription?.cancel();
+                  setState(() => _isGenerating = false);
+                },
+              )
             else
               IconButton(icon: const Icon(Icons.send), onPressed: _sendPrompt),
           ],
@@ -366,7 +435,10 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Downloading: ${(_downloadProgress * 100).toStringAsFixed(1)}%', style: const TextStyle(fontSize: 13)),
+            Text(
+              'Downloading: ${(_downloadProgress * 100).toStringAsFixed(1)}%',
+              style: const TextStyle(fontSize: 13),
+            ),
             const SizedBox(height: 6),
             LinearProgressIndicator(value: _downloadProgress),
           ],
@@ -375,7 +447,11 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
     }
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: ElevatedButton.icon(onPressed: _downloadModel, icon: const Icon(Icons.download), label: const Text('Download GGUF model (~800MB)')),
+      child: ElevatedButton.icon(
+        onPressed: _downloadModel,
+        icon: const Icon(Icons.download),
+        label: const Text('Download GGUF model (~800MB)'),
+      ),
     );
   }
 
@@ -387,10 +463,18 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
           TextField(
             controller: _apiKeyController,
             obscureText: true,
-            decoration: const InputDecoration(labelText: 'OpenAI API Key', hintText: 'sk-...', prefixIcon: Icon(Icons.key), border: OutlineInputBorder()),
+            decoration: const InputDecoration(
+              labelText: 'OpenAI API Key',
+              hintText: 'sk-...',
+              prefixIcon: Icon(Icons.key),
+              border: OutlineInputBorder(),
+            ),
           ),
           const SizedBox(height: 6),
-          const Text('Skeleton — methods throw UnimplementedError.', style: TextStyle(fontSize: 11, color: Colors.orange)),
+          const Text(
+            'Skeleton — methods throw UnimplementedError.',
+            style: TextStyle(fontSize: 11, color: Colors.orange),
+          ),
         ],
       ),
     );

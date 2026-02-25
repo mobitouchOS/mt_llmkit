@@ -1,7 +1,7 @@
 // lib/src/rag/rag_pipeline.dart
 
+import '../core/llm_interface.dart';
 import '../core/streaming_result.dart';
-import '../presentation/llm_plugin.dart';
 import 'chunking/text_chunker.dart';
 import 'document/document.dart';
 import 'embeddings/embedding_provider.dart';
@@ -91,7 +91,7 @@ class RagIngestionProgress {
 class RagPipeline {
   final EmbeddingProvider embeddingProvider;
   final VectorStore vectorStore;
-  final LlmPlugin generationPlugin;
+  final LlmInterface generationPlugin;
   final TextChunker chunker;
   final String promptTemplate;
 
@@ -261,6 +261,6 @@ class RagPipeline {
   /// (and persisted to disk if autoSavePath was set).
   Future<void> dispose() async {
     await embeddingProvider.dispose();
-    await generationPlugin.dispose();
+    generationPlugin.dispose();
   }
 }

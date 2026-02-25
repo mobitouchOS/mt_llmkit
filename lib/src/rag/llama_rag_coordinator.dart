@@ -22,9 +22,11 @@ import 'dart:isolate';
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 import '../core/llm_config.dart';
-import '../domain/providers/llm_provider.dart';
+import '../core/llm_interface.dart';
+import '../core/performance_metrics.dart';
+import '../core/streaming_result.dart';
 import '../native/library_loader.dart';
-import '../presentation/llm_plugin.dart';
+import '../utils/llm_utils.dart';
 import 'embeddings/embedding_provider.dart';
 
 // ── Worker isolate ────────────────────────────────────────────────────────────
@@ -212,21 +214,29 @@ class _CoordEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
-class _CoordGenerationProvider implements LLMProvider {
+/// Generation plugin backed by the RAG worker isolate.
+///
+/// Implements [LlmInterface] so it can be used wherever a generation plugin
+/// is expected (e.g. [RagPipeline.generationPlugin]).
+class _CoordPlugin implements LlmInterface {
   final SendPort _workerPort;
+  bool _isGenerating = false;
 
-  _CoordGenerationProvider(this._workerPort);
+  _CoordPlugin(this._workerPort);
 
   @override
-  Future<void> initialize(Map<String, dynamic> config) async {
-    // model already loaded in the coordinator — no-op
+  bool get isInitialized => true; // model is loaded by the coordinator
+
+  @override
+  bool get isGenerating => _isGenerating;
+
+  @override
+  Future<void> loadModel(String localPath) async {
+    // Model is loaded by LlamaRagCoordinator — no-op here.
   }
 
   @override
-  Stream<String> sendPrompt(
-    String prompt, {
-    Map<String, dynamic>? parameters,
-  }) {
+  Stream<String> sendPrompt(String prompt) {
     final controller = StreamController<String>();
     final replyPort = ReceivePort();
 
@@ -236,6 +246,7 @@ class _CoordGenerationProvider implements LLMProvider {
       'streamPort': replyPort.sendPort,
     });
 
+    _isGenerating = true;
     final sub = replyPort.listen((dynamic message) {
       if (message is! Map<String, dynamic>) return;
       switch (message['type'] as String?) {
@@ -245,9 +256,11 @@ class _CoordGenerationProvider implements LLMProvider {
           }
         case 'done':
           replyPort.close();
+          _isGenerating = false;
           if (!controller.isClosed) controller.close();
         case 'error':
           replyPort.close();
+          _isGenerating = false;
           if (!controller.isClosed) {
             controller.addError(
               Exception('Generation error: ${message['message']}'),
@@ -259,6 +272,7 @@ class _CoordGenerationProvider implements LLMProvider {
     controller.onCancel = () {
       sub.cancel();
       replyPort.close();
+      _isGenerating = false;
       _workerPort.send({'type': 'stop_generate'});
     };
 
@@ -266,8 +280,52 @@ class _CoordGenerationProvider implements LLMProvider {
   }
 
   @override
-  Future<void> dispose() async {
-    // coordinator handles dispose
+  Future<String> sendPromptComplete(String prompt) async {
+    final buffer = StringBuffer();
+    await for (final token in sendPrompt(prompt)) {
+      buffer.write(token);
+    }
+    return buffer.toString();
+  }
+
+  @override
+  Stream<StreamingChunk> sendPromptStream(String prompt) async* {
+    final startTime = DateTime.now();
+    int totalTokenCount = 0;
+
+    await for (final token in sendPrompt(prompt)) {
+      totalTokenCount += LlmUtils.estimateTokenCount(token);
+
+      yield StreamingChunk(
+        text: token,
+        metrics: PerformanceMetrics.fromGeneration(
+          tokenCount: totalTokenCount,
+          startTime: startTime,
+          endTime: DateTime.now(),
+        ),
+        isFinal: false,
+      );
+    }
+
+    yield StreamingChunk(
+      text: '',
+      metrics: PerformanceMetrics.fromGeneration(
+        tokenCount: totalTokenCount,
+        startTime: startTime,
+        endTime: DateTime.now(),
+      ),
+      isFinal: true,
+    );
+  }
+
+  @override
+  void dispose() {
+    // Coordinator handles isolate lifecycle — no-op here.
+  }
+
+  @override
+  void clean() {
+    // No context-reset API exposed by the worker — no-op.
   }
 }
 
@@ -311,7 +369,7 @@ class LlamaRagCoordinator {
   Isolate? _isolate;
   SendPort? _workerPort;
   late final EmbeddingProvider _embeddingProvider;
-  late final LlmPlugin _generationPlugin;
+  late final LlmInterface _generationPlugin;
 
   LlamaRagCoordinator._();
 
@@ -399,17 +457,14 @@ class LlamaRagCoordinator {
       dimensions: probeVec.length,
     );
 
-    // Generation plugin — provider delegates to the worker isolate
-    final genProvider = _CoordGenerationProvider(_workerPort!);
-    _generationPlugin = LlmPlugin.custom(provider: genProvider, config: const {});
-    await _generationPlugin.initialize(); // no-op in provider, sets isInitialized
+    _generationPlugin = _CoordPlugin(_workerPort!);
   }
 
   /// Embedding provider — communicates with the worker isolate.
   EmbeddingProvider get embeddingProvider => _embeddingProvider;
 
   /// Generation plugin — communicates with the worker isolate.
-  LlmPlugin get generationPlugin => _generationPlugin;
+  LlmInterface get generationPlugin => _generationPlugin;
 
   /// Whether the coordinator is ready for use.
   bool get isReady => _workerPort != null;

@@ -4,28 +4,26 @@
 export 'package:llama_cpp_dart/llama_cpp_dart.dart'
     show PromptFormat, ChatMLFormat, AlpacaFormat, GemmaFormat;
 
-// ── Core (typy danych, metryki, wyniki) ──────────────────────────────────────
+// ── REST API providers ────────────────────────────────────────────────────────
+export 'src/api/openai_provider.dart';
+export 'src/api/rest_api_provider.dart';
+// ── Core ─────────────────────────────────────────────────────────────────────
 export 'src/core/generation_result.dart';
 export 'src/core/llm_config.dart';
 export 'src/core/llm_interface.dart';
 export 'src/core/performance_metrics.dart';
 export 'src/core/streaming_result.dart';
-// ── Data (provider implementations) ─────────────────────────────────────────
-export 'src/data/providers/local_gguf_provider.dart';
-export 'src/data/providers/openai_provider.dart';
-// ── Domain (abstrakcje) ───────────────────────────────────────────────────────
-export 'src/domain/providers/llm_provider.dart';
 // ── Prompt formats ────────────────────────────────────────────────────────────
 export 'src/formats/harmony_format.dart';
 export 'src/formats/prompt_format.dart';
-// ── Legacy (backwards compatibility) ─────────────────────────────────────────
+// ── GGUF (local model plugin) ─────────────────────────────────────────────────
+export 'src/gguf/gguf_plugin.dart';
+// ── Models (low-level, for advanced use) ─────────────────────────────────────
 export 'src/models/llm_model_base.dart';
 export 'src/models/llm_model_isolated.dart';
 export 'src/models/llm_model_standard.dart';
-// ── Presentation (main plugin class) ─────────────────────────────────────────
-export 'src/presentation/llm_plugin.dart';
-export 'src/rag/chunking/text_chunker.dart';
 // ── RAG (Retrieval-Augmented Generation) ─────────────────────────────────────
+export 'src/rag/chunking/text_chunker.dart';
 export 'src/rag/document/document.dart';
 export 'src/rag/document/document_chunk.dart';
 export 'src/rag/embeddings/embedding_provider.dart';

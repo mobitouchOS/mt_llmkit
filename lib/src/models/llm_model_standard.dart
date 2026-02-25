@@ -26,7 +26,9 @@ class LlmModelStandard extends LlmModelBase {
 
     _llama = Llama(
       localPath,
-      modelParams: ModelParams()..nGpuLayers = config.nGpuLayersDefault,
+      modelParams: ModelParams()
+        ..nGpuLayers = config.nGpuLayersDefault
+        ..mainGpu = -1,
       contextParams: ContextParams()
         ..nPredict = config.nPredictDefault
         ..nCtx = config.nCtxDefault
@@ -43,13 +45,32 @@ class LlmModelStandard extends LlmModelBase {
   }
 
   @override
-  Stream<String>? sendPrompt(String prompt) {
+  Stream<String> sendPrompt(String prompt) {
     checkInitialized();
 
     final formattedPrompt = config.promptFormatDefault.formatPrompt(prompt);
     _llama!.setPrompt(formattedPrompt);
 
     return _llamaBufferedStream();
+  }
+
+  @override
+  Future<String> sendPromptComplete(String prompt) async {
+    checkInitialized();
+
+    markGenerationStart();
+    try {
+      final formattedPrompt = config.promptFormatDefault.formatPrompt(prompt);
+      _llama!.setPrompt(formattedPrompt);
+
+      final buffer = StringBuffer();
+      await for (final token in _llama!.generateText()) {
+        buffer.write(token);
+      }
+      return buffer.toString();
+    } finally {
+      markGenerationEnd();
+    }
   }
 
   Stream<String> _llamaBufferedStream() async* {
@@ -59,21 +80,26 @@ class LlmModelStandard extends LlmModelBase {
     final stopwatch = Stopwatch()..start();
     const yieldInterval = Duration(milliseconds: 50);
 
-    await for (final token in _llama!.generateText()) {
-      buffer.write(token);
+    markGenerationStart();
+    try {
+      await for (final token in _llama!.generateText()) {
+        buffer.write(token);
 
-      if (stopwatch.elapsed >= yieldInterval) {
-        if (buffer.isNotEmpty) {
-          yield buffer.toString();
-          buffer.clear();
+        if (stopwatch.elapsed >= yieldInterval) {
+          if (buffer.isNotEmpty) {
+            yield buffer.toString();
+            buffer.clear();
+          }
+          stopwatch.reset();
+          await Future.delayed(Duration.zero);
         }
-        stopwatch.reset();
-        await Future.delayed(Duration.zero);
       }
-    }
 
-    if (buffer.isNotEmpty) {
-      yield buffer.toString();
+      if (buffer.isNotEmpty) {
+        yield buffer.toString();
+      }
+    } finally {
+      markGenerationEnd();
     }
   }
 
@@ -87,33 +113,32 @@ class LlmModelStandard extends LlmModelBase {
 
     _llama!.setPrompt(formattedPrompt);
 
-    await for (final chunk in _llama!.generateText()) {
-      // Count actual tokens in the chunk (approximate: split by whitespace and punctuation)
-      // Each chunk may contain multiple tokens
-      final tokensInChunk = LlmUtils.estimateTokenCount(chunk);
-      totalTokenCount += tokensInChunk;
+    markGenerationStart();
+    try {
+      await for (final chunk in _llama!.generateText()) {
+        final tokensInChunk = LlmUtils.estimateTokenCount(chunk);
+        totalTokenCount += tokensInChunk;
 
-      final currentTime = DateTime.now();
+        final metrics = PerformanceMetrics.fromGeneration(
+          tokenCount: totalTokenCount,
+          startTime: startTime,
+          endTime: DateTime.now(),
+        );
 
-      // Calculate current metrics
-      final metrics = PerformanceMetrics.fromGeneration(
+        yield StreamingChunk(text: chunk, metrics: metrics, isFinal: false);
+      }
+
+      final endTime = DateTime.now();
+      final finalMetrics = PerformanceMetrics.fromGeneration(
         tokenCount: totalTokenCount,
         startTime: startTime,
-        endTime: currentTime,
+        endTime: endTime,
       );
 
-      yield StreamingChunk(text: chunk, metrics: metrics, isFinal: false);
+      yield StreamingChunk(text: '', metrics: finalMetrics, isFinal: true);
+    } finally {
+      markGenerationEnd();
     }
-
-    // Send final chunk with final metrics
-    final endTime = DateTime.now();
-    final finalMetrics = PerformanceMetrics.fromGeneration(
-      tokenCount: totalTokenCount,
-      startTime: startTime,
-      endTime: endTime,
-    );
-
-    yield StreamingChunk(text: '', metrics: finalMetrics, isFinal: true);
   }
 
   @override

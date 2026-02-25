@@ -1,4 +1,5 @@
 // lib/src/models/llm_model_isolated.dart
+import 'dart:async';
 import 'dart:io';
 
 import 'package:llama_cpp_dart/llama_cpp_dart.dart';
@@ -48,13 +49,65 @@ class LlmModelIsolated extends LlmModelBase {
   }
 
   @override
-  Stream<String>? sendPrompt(String prompt) {
+  Stream<String> sendPrompt(String prompt) {
     checkInitialized();
-
     final formattedPrompt = config.promptFormatDefault.formatPrompt(prompt);
-    _llamaParent!.sendPrompt(formattedPrompt);
+    return _isolatedStream(formattedPrompt);
+  }
 
-    return _llamaParent!.stream;
+  @override
+  Future<String> sendPromptComplete(String prompt) async {
+    checkInitialized();
+    markGenerationStart();
+    try {
+      final formattedPrompt = config.promptFormatDefault.formatPrompt(prompt);
+      final buffer = StringBuffer();
+      await for (final token in _promptTokenStream(formattedPrompt)) {
+        buffer.write(token);
+      }
+      return buffer.toString();
+    } finally {
+      markGenerationEnd();
+    }
+  }
+
+  // Wraps _promptTokenStream with isGenerating tracking for sendPrompt.
+  Stream<String> _isolatedStream(String formattedPrompt) async* {
+    markGenerationStart();
+    try {
+      yield* _promptTokenStream(formattedPrompt);
+    } finally {
+      markGenerationEnd();
+    }
+  }
+
+  // Bridges the persistent broadcast stream to a per-prompt stream that closes
+  // when waitForCompletion fires for this specific promptId.
+  Stream<String> _promptTokenStream(String formattedPrompt) async* {
+    final controller = StreamController<String>();
+    final tokenSub = _llamaParent!.stream.listen(
+      (token) { if (!controller.isClosed) controller.add(token); },
+      onError: (Object e) { if (!controller.isClosed) controller.addError(e); },
+    );
+
+    final promptId = await _llamaParent!.sendPrompt(formattedPrompt);
+
+    _llamaParent!.waitForCompletion(promptId).then((_) {
+      tokenSub.cancel();
+      if (!controller.isClosed) controller.close();
+    }, onError: (_) {
+      tokenSub.cancel();
+      if (!controller.isClosed) controller.close();
+    });
+
+    try {
+      await for (final token in controller.stream) {
+        yield token;
+      }
+    } finally {
+      await tokenSub.cancel();
+      if (!controller.isClosed) await controller.close();
+    }
   }
 
   @override
@@ -65,35 +118,35 @@ class LlmModelIsolated extends LlmModelBase {
     final formattedPrompt = config.promptFormatDefault.formatPrompt(prompt);
     int totalTokenCount = 0;
 
-    _llamaParent!.sendPrompt(formattedPrompt);
+    markGenerationStart();
+    try {
+      await for (final chunk in _promptTokenStream(formattedPrompt)) {
+        final tokensInChunk = LlmUtils.estimateTokenCount(chunk);
+        totalTokenCount += tokensInChunk;
 
-    await for (final chunk in _llamaParent!.stream) {
-      // Count actual tokens in the chunk (approximate: split by whitespace and punctuation)
-      // Each chunk may contain multiple tokens
-      final tokensInChunk = LlmUtils.estimateTokenCount(chunk);
-      totalTokenCount += tokensInChunk;
+        yield StreamingChunk(
+          text: chunk,
+          metrics: PerformanceMetrics.fromGeneration(
+            tokenCount: totalTokenCount,
+            startTime: startTime,
+            endTime: DateTime.now(),
+          ),
+          isFinal: false,
+        );
+      }
 
-      final currentTime = DateTime.now();
-
-      // Calculate current metrics
-      final metrics = PerformanceMetrics.fromGeneration(
-        tokenCount: totalTokenCount,
-        startTime: startTime,
-        endTime: currentTime,
+      yield StreamingChunk(
+        text: '',
+        metrics: PerformanceMetrics.fromGeneration(
+          tokenCount: totalTokenCount,
+          startTime: startTime,
+          endTime: DateTime.now(),
+        ),
+        isFinal: true,
       );
-
-      yield StreamingChunk(text: chunk, metrics: metrics, isFinal: false);
+    } finally {
+      markGenerationEnd();
     }
-
-    // Send final chunk with final metrics
-    final endTime = DateTime.now();
-    final finalMetrics = PerformanceMetrics.fromGeneration(
-      tokenCount: totalTokenCount,
-      startTime: startTime,
-      endTime: endTime,
-    );
-
-    yield StreamingChunk(text: '', metrics: finalMetrics, isFinal: true);
   }
 
   @override

@@ -28,7 +28,7 @@ class MockLlmModel extends LlmModelBase {
   }
 
   @override
-  Stream<String>? sendPrompt(String prompt) {
+  Stream<String> sendPrompt(String prompt) {
     checkInitialized();
     _sendPromptCalled = true;
     _lastPrompt = prompt;
@@ -36,22 +36,11 @@ class MockLlmModel extends LlmModelBase {
   }
 
   @override
-  Future<GenerationResult> sendPromptWithMetrics(String prompt) async {
+  Future<String> sendPromptComplete(String prompt) async {
     checkInitialized();
     _sendPromptCalled = true;
     _lastPrompt = prompt;
-
-    final startTime = DateTime.now();
-    final text = 'Mock response for: $prompt';
-    final endTime = DateTime.now();
-
-    final metrics = PerformanceMetrics.fromGeneration(
-      tokenCount: 10,
-      startTime: startTime,
-      endTime: endTime,
-    );
-
-    return GenerationResult.success(text: text, metrics: metrics);
+    return 'Mock response for: $prompt';
   }
 
   @override
@@ -63,7 +52,6 @@ class MockLlmModel extends LlmModelBase {
     final startTime = DateTime.now();
     final text = 'Mock response for: $prompt';
 
-    // Simulate streaming with metrics
     for (var i = 0; i < text.length; i += 5) {
       final chunk = text.substring(i, (i + 5).clamp(0, text.length));
       final currentTime = DateTime.now();
@@ -144,8 +132,16 @@ void main() {
       expect(model.sendPromptCalled, true);
       expect(model.lastPrompt, 'test prompt');
 
-      final response = await stream!.first;
+      final response = await stream.first;
       expect(response, 'Mock response for: test prompt');
+    });
+
+    test('should allow sending complete prompt after initialization', () async {
+      await model.loadModel('/test/path');
+      final response = await model.sendPromptComplete('test prompt');
+
+      expect(response, 'Mock response for: test prompt');
+      expect(model.sendPromptCalled, true);
     });
 
     test('should allow cleaning after initialization', () async {
@@ -177,25 +173,18 @@ void main() {
     });
 
     test('should handle multiple operations in sequence', () async {
-      // Load
       await model.loadModel('/test/path1');
       expect(model.isInitialized, true);
 
-      // Send prompt
       final stream1 = model.sendPrompt('prompt1');
-      expect(stream1, isNotNull);
-      await stream1!.first;
+      await stream1.first;
 
-      // Clean
       model.clean();
       expect(model.cleanCalled, true);
 
-      // Send another prompt
       final stream2 = model.sendPrompt('prompt2');
-      expect(stream2, isNotNull);
-      await stream2!.first;
+      await stream2.first;
 
-      // Dispose
       model.dispose();
       expect(model.isDisposed, true);
     });
