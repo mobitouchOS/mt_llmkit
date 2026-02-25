@@ -16,7 +16,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:llmcpp/llmcpp.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:read_pdf_text/read_pdf_text.dart';
 
 // ── Modele downloadów ──────────────────────────────────────────────────────
 
@@ -238,13 +238,17 @@ class _RagPageState extends State<RagPage> {
         embedModelPath: _embeddingModelPath!,
         genModelPath: _generationModelPath!,
         genConfig: const LlmConfig(
-          temp: 0.3,
+          temp: 0.2,
+          topP: 0.85,
+          topK: 30,
+          nBatch: 512,
+          penaltyRepeat: 1.15,
           nCtx: 4096,
           nGpuLayers: 4,
           nThreads: 4,
-          nPredict: 512,
+          nPredict: 384,
         ),
-        embedNCtx: 512,
+        embedNCtx: 1024,
       );
 
       // VectorStore z auto-save i wczytaniem wcześniejszego indeksu
@@ -255,7 +259,7 @@ class _RagPageState extends State<RagPage> {
         embeddingProvider: coordinator.embeddingProvider,
         vectorStore: vectorStore,
         generationPlugin: coordinator.generationPlugin,
-        chunker: const TextChunker(chunkSize: 500, chunkOverlap: 100),
+        chunker: const TextChunker(chunkSize: 400, chunkOverlap: 80),
       );
 
       setState(() {
@@ -314,22 +318,23 @@ class _RagPageState extends State<RagPage> {
 
   /// Ekstrakcja tekstu z PDF przy użyciu syncfusion_flutter_pdf.
   Future<String> _extractPdfText(String pdfPath) async {
-    final bytes = await File(pdfPath).readAsBytes();
-    final pdfDocument = PdfDocument(inputBytes: bytes);
-    final extractor = PdfTextExtractor(pdfDocument);
+    // final bytes = await File(pdfPath).readAsBytes();
+    // final pdfDocument = PdfDocument(inputBytes: bytes);
+    // final extractor = PdfTextExtractor(pdfDocument);
+    final text = await ReadPdfText.getPDFtextPaginated(pdfPath);
 
     final buffer = StringBuffer();
-    for (int i = 0; i < pdfDocument.pages.count; i++) {
-      final pageText = extractor.extractText(
-        startPageIndex: i,
-        endPageIndex: i,
-      );
-      if (pageText.isNotEmpty) {
-        buffer.writeln(pageText);
+    for (int i = 0; i < text.length; i++) {
+      // final pageText = extractor.extractText(
+      //   startPageIndex: i,
+      //   endPageIndex: i,
+      // );
+      if (text[i].isNotEmpty) {
+        buffer.writeln(text[i]);
       }
     }
 
-    pdfDocument.dispose();
+    // text.dispose();
     return buffer.toString();
   }
 
@@ -399,7 +404,7 @@ class _RagPageState extends State<RagPage> {
       // Pobierz relevantne chunki (do wyświetlenia jako źródła)
       _sources = await _pipeline!.findRelevant(
         question,
-        topK: 5,
+        topK: 4,
         minSimilarity: 0.25,
       );
       setState(() {});
@@ -407,7 +412,7 @@ class _RagPageState extends State<RagPage> {
       // Streaming odpowiedzi z RAG
       final answerBuffer = StringBuffer();
       _querySubscription = _pipeline!
-          .query(question, topK: 5, minSimilarity: 0.25)
+          .query(question, topK: 4, minSimilarity: 0.25)
           .listen(
             (chunk) {
               setState(() {

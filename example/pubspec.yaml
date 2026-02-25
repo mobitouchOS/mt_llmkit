@@ -35,7 +35,7 @@ dependencies:
   file_picker: ^8.1.2
 
   # RAG: ekstrakcja tekstu z plików PDF (bezpłatna licencja community)
-  syncfusion_flutter_pdf: ^27.1.48
+  read_pdf_text: ^0.3.1
 
 dev_dependencies:
   integration_test:
