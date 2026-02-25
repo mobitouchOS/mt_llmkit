@@ -79,9 +79,8 @@ class _RagPageState extends State<RagPage> {
   double _downloadProgressEmbed = 0;
 
   // ── State: pipeline ────────────────────────────────────────────────────
-  LlamaRagCoordinator? _coordinator;
-  RagPipeline? _pipeline;
-  bool _pipelineReady = false;
+  RagPlugin? _rag;
+  bool get _pipelineReady => _rag?.isReady ?? false;
 
   // ── State: documents ───────────────────────────────────────────────────
   final List<_IndexedDoc> _indexedDocs = [];
@@ -108,8 +107,7 @@ class _RagPageState extends State<RagPage> {
   @override
   void dispose() {
     _querySubscription?.cancel();
-    _pipeline?.dispose();
-    _coordinator?.dispose();
+    _rag?.dispose();
     _queryController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -133,19 +131,6 @@ class _RagPageState extends State<RagPage> {
       }
     });
 
-    // Load previously saved index if both models are ready
-    if (_generationModelReady && _embeddingModelReady) {
-      await _tryLoadSavedIndex();
-    }
-  }
-
-  Future<void> _tryLoadSavedIndex() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final indexPath = '${dir.path}/rag_index.json';
-    if (File(indexPath).existsSync()) {
-      // The index will be loaded during pipeline initialization
-      _showSnack('Saved index found — it will be loaded on initialization.');
-    }
   }
 
   // ── Model downloads ────────────────────────────────────────────────────
@@ -218,58 +203,36 @@ class _RagPageState extends State<RagPage> {
 
   // ── Pipeline initialization ────────────────────────────────────────────
 
-  /// Initializes RagPipeline via [LlamaRagCoordinator].
-  ///
-  /// The coordinator loads both models (embeddings + generation) in a SINGLE
-  /// worker isolate — eliminating the "Cannot invoke native callback from a
-  /// different isolate" crash caused by the `llama_log_set` race between
-  /// two isolated contexts.
   Future<void> _initializePipeline() async {
     if (!_generationModelReady || !_embeddingModelReady) return;
 
+    final dir = await getApplicationDocumentsDirectory();
+    final rag = RagPlugin(
+      genModelPath: _generationModelPath!,
+      embedModelPath: _embeddingModelPath!,
+      indexPath: '${dir.path}/rag_index.json',
+      genConfig: const LlmConfig(
+        temp: 0.3,
+        topP: 0.85,
+        topK: 30,
+        nBatch: 1024,
+        penaltyRepeat: 1.15,
+        nCtx: 4096,
+        nGpuLayers: 4,
+        nThreads: 4,
+        nPredict: 512,
+      ),
+      chunker: const TextChunker(chunkSize: 600, chunkOverlap: 100),
+    );
+
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final indexPath = '${dir.path}/rag_index.json';
-
-      // One isolate manages both models — no log callback race
-      final coordinator = await LlamaRagCoordinator.create(
-        embedModelPath: _embeddingModelPath!,
-        genModelPath: _generationModelPath!,
-        genConfig: const LlmConfig(
-          temp: 0.3,
-          topP: 0.85,
-          topK: 30,
-          nBatch: 1024,
-          penaltyRepeat: 1.15,
-          nCtx: 4096,
-          nGpuLayers: 4,
-          nThreads: 4,
-          nPredict: 512,
-        ),
-        embedNCtx: 512,
-      );
-
-      // VectorStore with auto-save and loading of the previous index
-      final vectorStore = InMemoryVectorStore(autoSavePath: indexPath);
-      await vectorStore.load(indexPath);
-
-      final pipeline = RagPipeline(
-        embeddingProvider: coordinator.embeddingProvider,
-        vectorStore: vectorStore,
-        generationPlugin: coordinator.generationPlugin,
-        chunker: const TextChunker(chunkSize: 600, chunkOverlap: 100),
-      );
-
-      setState(() {
-        _coordinator = coordinator;
-        _pipeline = pipeline;
-        _pipelineReady = true;
-      });
-
-      if (vectorStore.size > 0) {
-        _showSnack('Index loaded: ${vectorStore.indexedSize} chunks');
+      await rag.initialize();
+      setState(() => _rag = rag);
+      if (rag.indexedSize > 0) {
+        _showSnack('Index loaded: ${rag.indexedSize} chunks');
       }
     } catch (e) {
+      rag.dispose();
       _showError('Pipeline initialization error: $e');
     }
   }
@@ -329,10 +292,10 @@ class _RagPageState extends State<RagPage> {
 
   /// Document ingestion: chunk → embed → store.
   ///
-  /// The [RagPipeline.ingestDocument] stream reports progress after each
+  /// The [RagPlugin.ingestDocument] stream reports progress after each
   /// embedded chunk — we update the UI in real time.
   Future<void> _ingestDocument(Document document) async {
-    if (_pipeline == null) return;
+    if (_rag == null) return;
 
     setState(() {
       _isIngesting = true;
@@ -341,7 +304,7 @@ class _RagPageState extends State<RagPage> {
 
     int chunkCount = 0;
     try {
-      await for (final progress in _pipeline!.ingestDocument(document)) {
+      await for (final progress in _rag!.ingestDocument(document)) {
         setState(() {
           _ingestionProgress = progress;
           chunkCount = progress.embeddedChunks;
@@ -362,14 +325,14 @@ class _RagPageState extends State<RagPage> {
   }
 
   Future<void> _removeDocument(_IndexedDoc doc) async {
-    await _pipeline!.vectorStore.removeDocument(doc.document.id);
+    await _rag!.removeDocument(doc.document.id);
     setState(() => _indexedDocs.remove(doc));
     _showSnack('Removed "${doc.document.title}" from the index');
   }
 
   Future<void> _clearIndex() async {
-    if (_pipeline == null) return;
-    await _pipeline!.vectorStore.clear();
+    if (_rag == null) return;
+    await _rag!.clearIndex();
     setState(() => _indexedDocs.clear());
     _showSnack('Index cleared');
   }
@@ -385,7 +348,7 @@ class _RagPageState extends State<RagPage> {
   /// 4. generationPlugin.sendPromptStream(augmentedPrompt) → `Stream<StreamingChunk>`
   Future<void> _sendQuery() async {
     final question = _queryController.text.trim();
-    if (question.isEmpty || _pipeline == null || _isQuerying) return;
+    if (question.isEmpty || _rag == null || _isQuerying) return;
 
     await _querySubscription?.cancel();
 
@@ -398,7 +361,7 @@ class _RagPageState extends State<RagPage> {
 
     try {
       // Retrieve relevant chunks (for display as sources)
-      _sources = await _pipeline!.findRelevant(
+      _sources = await _rag!.findRelevant(
         question,
         topK: 4,
         minSimilarity: 0.25,
@@ -407,7 +370,7 @@ class _RagPageState extends State<RagPage> {
 
       // Streaming RAG response
       final answerBuffer = StringBuffer();
-      _querySubscription = _pipeline!
+      _querySubscription = _rag!
           .query(question, topK: 4, minSimilarity: 0.25)
           .listen(
             (chunk) {
@@ -571,7 +534,7 @@ class _RagPageState extends State<RagPage> {
             // ── Section: RAG Query ───────────────────────────────────────
             _SectionHeader(title: '3. Ask', icon: Icons.question_answer),
 
-            if (_pipelineReady && _pipeline!.vectorStore.indexedSize > 0) ...[
+            if (_pipelineReady && _rag!.indexedSize > 0) ...[
               Row(
                 children: [
                   Expanded(
