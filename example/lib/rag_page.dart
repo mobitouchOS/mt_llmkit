@@ -35,11 +35,11 @@ class _ModelSpec {
 }
 
 const _generationModel = _ModelSpec(
-  name: 'Llama-3.2-1B-Instruct Q4_K_M',
+  name: 'Llama-3.2-3B-Instruct Q4_K_M',
   url:
-      'https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
-  filename: 'model.gguf',
-  description: 'Generation model (~800MB)',
+      'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf',
+  filename: 'rag.gguf',
+  description: 'Generation model (~2GB)',
 );
 
 const _embeddingModel = _ModelSpec(
@@ -144,9 +144,7 @@ class _RagPageState extends State<RagPage> {
     final indexPath = '${dir.path}/rag_index.json';
     if (File(indexPath).existsSync()) {
       // The index will be loaded during pipeline initialization
-      _showSnack(
-        'Saved index found — it will be loaded on initialization.',
-      );
+      _showSnack('Saved index found — it will be loaded on initialization.');
     }
   }
 
@@ -369,6 +367,13 @@ class _RagPageState extends State<RagPage> {
     _showSnack('Removed "${doc.document.title}" from the index');
   }
 
+  Future<void> _clearIndex() async {
+    if (_pipeline == null) return;
+    await _pipeline!.vectorStore.clear();
+    setState(() => _indexedDocs.clear());
+    _showSnack('Index cleared');
+  }
+
   // ── RAG query ──────────────────────────────────────────────────────────
 
   /// Queries the RAG pipeline and displays the streaming response with sources.
@@ -522,10 +527,24 @@ class _RagPageState extends State<RagPage> {
               ),
 
             if (_pipelineReady) ...[
-              ElevatedButton.icon(
-                onPressed: _isIngesting ? null : _pickAndIngestFile,
-                icon: const Icon(Icons.attach_file),
-                label: const Text('Add file (PDF / TXT)'),
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _isIngesting ? null : _pickAndIngestFile,
+                    icon: const Icon(Icons.attach_file),
+                    label: const Text('Add file (PDF / TXT)'),
+                  ),
+                  const SizedBox(width: 8),
+                  if (_indexedDocs.isNotEmpty)
+                    OutlinedButton.icon(
+                      onPressed: _isIngesting ? null : _clearIndex,
+                      icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                      label: const Text(
+                        'Clear index',
+                        style: TextStyle(color: Colors.red),
+                      ),
+                    ),
+                ],
               ),
 
               // Ingestion progress bar
