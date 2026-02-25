@@ -1,56 +1,56 @@
 // lib/src/rag/embeddings/embedding_provider.dart
 
-/// Abstrakcyjny interfejs dla dostawców embeddingów tekstowych.
+/// Abstract interface for text embedding providers.
 ///
-/// Embedding to wektorowa reprezentacja tekstu (`List<double>`) w przestrzeni
-/// semantycznej — podobne znaczeniowo teksty mają bliskie wektory.
-/// Używany przez [InMemoryVectorStore] do wyszukiwania przez podobieństwo kosinusowe.
+/// An embedding is a vector representation of text (`List<double>`) in a
+/// semantic space — texts with similar meaning have close vectors.
+/// Used by [InMemoryVectorStore] for cosine-similarity search.
 ///
-/// ## Implementacje
+/// ## Implementations
 ///
-/// - [LlamaEmbeddingProvider] — lokalne embeddingi przez llama.cpp (GGUF model)
+/// - [LlamaEmbeddingProvider] — local embeddings via llama.cpp (GGUF model)
 ///
-/// ## Użycie
+/// ## Usage
 ///
 /// ```dart
 /// final provider = LlamaEmbeddingProvider();
 /// await provider.initialize({'modelPath': '/path/to/nomic-embed-text.gguf'});
 ///
-/// final vector = await provider.embed('Jaka jest stolica Polski?');
-/// print('Wymiarowość: ${vector.length}');  // np. 768 dla nomic-embed-text
+/// final vector = await provider.embed('What is the capital of Poland?');
+/// print('Dimensions: ${vector.length}');  // e.g. 768 for nomic-embed-text
 ///
 /// await provider.dispose();
 /// ```
 abstract interface class EmbeddingProvider {
-  /// Inicjalizuje dostawcę z konfiguracją.
+  /// Initializes the provider with the given configuration.
   ///
-  /// Wymagane/opcjonalne klucze zależą od implementacji.
-  /// Dla [LlamaEmbeddingProvider]:
-  ///   - `modelPath` (String, wymagany): ścieżka do modelu embeddingów (.gguf)
-  ///   - `llmConfig` (LlmConfig, opcjonalny): parametry kontekstu
+  /// Required/optional keys depend on the implementation.
+  /// For [LlamaEmbeddingProvider]:
+  ///   - `modelPath` (String, required): path to the embeddings model (.gguf)
+  ///   - `llmConfig` (LlmConfig, optional): context parameters
   Future<void> initialize(Map<String, dynamic> config);
 
-  /// Generuje embedding dla pojedynczego tekstu.
+  /// Generates an embedding for a single text.
   ///
-  /// Zwraca znormalizowany wektor L2 jako [List<double>].
-  /// Rzuca [StateError] jeśli provider nie jest zainicjalizowany.
+  /// Returns an L2-normalised vector as [List<double>].
+  /// Throws [StateError] if the provider is not initialized.
   Future<List<double>> embed(String text);
 
-  /// Generuje embeddingi dla wielu tekstów sekwencyjnie.
+  /// Generates embeddings for multiple texts sequentially.
   ///
-  /// Domyślna implementacja wywołuje [embed()] w pętli.
-  /// Implementacje mogą nadpisać tę metodę dla wydajności batch processing.
+  /// Default implementation calls [embed()] in a loop.
+  /// Implementations may override this method for batch processing efficiency.
   Future<List<List<double>>> embedBatch(List<String> texts);
 
-  /// Zwalnia zasoby (model, Isolate).
+  /// Releases resources (model, Isolate).
   Future<void> dispose();
 
-  /// Wymiarowość wektora embeddingu.
+  /// Dimensionality of the embedding vector.
   ///
-  /// Zwraca 0 przed wywołaniem [initialize()].
-  /// Przykładowe wartości: 384 (bge-small), 768 (nomic-embed-text), 1536 (text-embedding-3-small).
+  /// Returns 0 before [initialize()] is called.
+  /// Example values: 384 (bge-small), 768 (nomic-embed-text), 1536 (text-embedding-3-small).
   int get dimensions;
 
-  /// Czy provider jest zainicjalizowany i gotowy do użycia
+  /// Whether the provider is initialized and ready for use
   bool get isInitialized;
 }

@@ -5,37 +5,37 @@ import 'dart:math' as math;
 import '../document/document.dart';
 import '../document/document_chunk.dart';
 
-/// Dzieli tekst dokumentu na nakładające się fragmenty (chunki).
+/// Splits document text into overlapping fragments (chunks).
 ///
-/// ## Algorytm sliding-window z inteligentnym podziałem
+/// ## Sliding-window algorithm with intelligent splitting
 ///
-/// 1. Okno przesuwa się o `chunkSize - chunkOverlap` znaków na iterację
-/// 2. Na granicy każdego chunku szukamy naturalnego miejsca podziału
-///    (koniec zdania: `.`, `!`, `?`, `\n`) w ostatniej 1/3 okna
-/// 3. Jeśli nie znaleziono — używamy granicy słowa (spacja)
-/// 4. Chunki krótsze niż `minChunkSize` są pomijane
+/// 1. The window advances by `chunkSize - chunkOverlap` characters per iteration
+/// 2. At each chunk boundary, a natural split point is sought
+///    (sentence end: `.`, `!`, `?`, `\n`) in the last 1/3 of the window
+/// 3. If none found — a word boundary (space) is used
+/// 4. Chunks shorter than `minChunkSize` are skipped
 ///
-/// ## Parametry
+/// ## Parameters
 ///
-/// - `chunkSize` (domyślnie 500 znaków ≈ 100–150 tokenów) — docelowy rozmiar
-/// - `chunkOverlap` (domyślnie 100 znaków) — nakładka dla ciągłości kontekstu
-/// - `minChunkSize` (domyślnie 50 znaków) — minimum dla chunka, poniżej pomijany
+/// - `chunkSize` (default 500 chars ≈ 100–150 tokens) — target size
+/// - `chunkOverlap` (default 100 chars) — overlap for context continuity
+/// - `minChunkSize` (default 50 chars) — minimum chunk size, smaller ones are skipped
 ///
-/// ## Przykład
+/// ## Example
 ///
 /// ```dart
 /// final chunker = TextChunker(chunkSize: 500, chunkOverlap: 100);
 /// final chunks = chunker.chunk(document);
-/// print('Podzielono na ${chunks.length} chunków');
+/// print('Split into ${chunks.length} chunks');
 /// ```
 class TextChunker {
-  /// Docelowa liczba znaków w jednym chunku
+  /// Target number of characters in a single chunk
   final int chunkSize;
 
-  /// Liczba znaków nakładki między sąsiednimi chunkami
+  /// Number of overlapping characters between adjacent chunks
   final int chunkOverlap;
 
-  /// Minimalna liczba znaków dla chunka (poniżej — pomijany)
+  /// Minimum number of characters for a chunk (smaller ones are skipped)
   final int minChunkSize;
 
   const TextChunker({
@@ -44,12 +44,12 @@ class TextChunker {
     this.minChunkSize = 50,
   }) : assert(
           chunkOverlap < chunkSize,
-          'chunkOverlap musi być mniejszy niż chunkSize',
+          'chunkOverlap must be less than chunkSize',
         );
 
-  /// Dzieli [document] na listę [DocumentChunk].
+  /// Splits [document] into a list of [DocumentChunk].
   ///
-  /// Zwraca pustą listę jeśli dokument jest pusty.
+  /// Returns an empty list if the document is empty.
   List<DocumentChunk> chunk(Document document) {
     final text = document.content.trim();
     if (text.isEmpty) return [];
@@ -61,7 +61,7 @@ class TextChunker {
     while (start < text.length) {
       final rawEnd = math.min(start + chunkSize, text.length);
 
-      // Znajdź naturalne miejsce podziału (nie rób tego na końcu tekstu)
+      // Find a natural split point (do not do this at the end of the text)
       final end = rawEnd < text.length
           ? _findSplitPoint(text, start, rawEnd)
           : rawEnd;
@@ -84,10 +84,10 @@ class TextChunker {
         chunkIndex++;
       }
 
-      // Przesuń okno z uwzględnieniem nakładki
+      // Advance the window taking overlap into account
       final step = end - start - chunkOverlap;
       if (step <= 0) {
-        // Zabezpieczenie przed nieskończoną pętlą dla bardzo małych tekstów
+        // Guard against infinite loop for very small texts
         break;
       }
       start += step;
@@ -96,38 +96,38 @@ class TextChunker {
     return chunks;
   }
 
-  /// Szuka najlepszego punktu podziału w zakresie `[rawEnd * 2/3, rawEnd]`.
+  /// Finds the best split point in the range `[rawEnd * 2/3, rawEnd]`.
   ///
-  /// Priorytet:
-  /// 1. Koniec zdania (`.`, `!`, `?`) + spacja lub nowa linia
-  /// 2. Nowa linia (`\n`)
-  /// 3. Granica słowa (ostatnia spacja w oknie)
-  /// 4. Twarda granica `rawEnd` (fallback)
+  /// Priority:
+  /// 1. Sentence end (`.`, `!`, `?`) + space or newline
+  /// 2. Newline (`\n`)
+  /// 3. Word boundary (last space in the window)
+  /// 4. Hard boundary `rawEnd` (fallback)
   int _findSplitPoint(String text, int start, int rawEnd) {
-    // Szukaj tylko w ostatniej 1/3 okna — zachowaj większość chunkSize
+    // Search only in the last 1/3 of the window — preserve most of chunkSize
     final searchStart = start + (rawEnd - start) * 2 ~/ 3;
     final candidate = text.substring(searchStart, rawEnd);
 
-    // 1. Koniec zdania z następującą spacją lub nową linią
+    // 1. Sentence end followed by a space or newline
     final sentenceEnd = RegExp(r'[.!?][\s\n]');
     final sentenceMatch = sentenceEnd.allMatches(candidate).lastOrNull;
     if (sentenceMatch != null) {
       return searchStart + sentenceMatch.end;
     }
 
-    // 2. Nowa linia
+    // 2. Newline
     final newlineIdx = candidate.lastIndexOf('\n');
     if (newlineIdx >= 0) {
       return searchStart + newlineIdx + 1;
     }
 
-    // 3. Ostatnia spacja (granica słowa)
+    // 3. Last space (word boundary)
     final spaceIdx = candidate.lastIndexOf(' ');
     if (spaceIdx >= 0) {
       return searchStart + spaceIdx + 1;
     }
 
-    // 4. Twarda granica
+    // 4. Hard boundary
     return rawEnd;
   }
 }

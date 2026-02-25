@@ -10,32 +10,32 @@ import '../data/providers/openai_provider.dart';
 import '../domain/providers/llm_provider.dart';
 import '../utils/llm_utils.dart';
 
-/// Główna klasa pluginu llmcpp.
+/// Main class of the llmcpp plugin.
 ///
-/// Przyjmuje [LLMProvider] jako zależność (wzorzec Dependency Injection),
-/// co umożliwia podmianę dostawcy LLM bez modyfikacji kodu klienta.
+/// Accepts [LLMProvider] as a dependency (Dependency Injection pattern),
+/// allowing the LLM provider to be swapped without modifying client code.
 ///
-/// Deleguje operacje do wybranego providera i wzbogaca surowy stream tokenów
-/// o live metryki wydajności ([sendPromptStream]).
+/// Delegates operations to the selected provider and enriches the raw token
+/// stream with live performance metrics ([sendPromptStream]).
 ///
-/// ## Wzorce projektowe
-/// - **Dependency Injection**: provider przekazywany przez konstruktor
-/// - **Factory Method**: wygodne konstruktory `LlmPlugin.localGGUF()`, `.openAI()`
-/// - **Facade**: uproszczony interfejs nad złożoną logiką providerów
-/// - **Decorator**: `sendPromptStream()` dekoruje `Stream<String>` o metryki
+/// ## Design patterns
+/// - **Dependency Injection**: provider passed via constructor
+/// - **Factory Method**: convenience constructors `LlmPlugin.localGGUF()`, `.openAI()`
+/// - **Facade**: simplified interface over complex provider logic
+/// - **Decorator**: `sendPromptStream()` decorates `Stream<String>` with metrics
 ///
-/// ## Użycie
+/// ## Usage
 ///
 /// ```dart
-/// // Z lokalnym modelem GGUF (Isolate, brak blokowania UI)
+/// // With a local GGUF model (Isolate, no UI blocking)
 /// final plugin = LlmPlugin.localGGUF(
 ///   modelPath: '/path/to/model.gguf',
 ///   config: LlmConfig(temp: 0.7, nCtx: 2048),
 /// );
 /// await plugin.initialize();
 ///
-/// // Streaming z live metrics
-/// plugin.sendPromptStream('Napisz wiersz o Krakowie').listen((chunk) {
+/// // Streaming with live metrics
+/// plugin.sendPromptStream('Write a poem about Krakow').listen((chunk) {
 ///   if (chunk.text.isNotEmpty) print(chunk.text);
 ///   if (chunk.isFinal) print('${chunk.metrics?.tokensPerSecond} t/s');
 /// });
@@ -43,29 +43,29 @@ import '../utils/llm_utils.dart';
 /// await plugin.dispose();
 /// ```
 class LlmPlugin {
-  /// Aktywny dostawca LLM
+  /// Active LLM provider
   final LLMProvider _provider;
 
-  /// Konfiguracja przekazywana do providera przy inicjalizacji
+  /// Configuration passed to the provider during initialization
   final Map<String, dynamic> _initConfig;
 
   bool _isInitialized = false;
 
-  /// Konstruktor z DI — przekaż dowolny [LLMProvider].
+  /// DI constructor — pass any [LLMProvider].
   ///
-  /// Preferuj factory methods ([localGGUF], [openAI], [custom])
-  /// zamiast bezpośredniego konstruktora.
+  /// Prefer factory methods ([localGGUF], [openAI], [custom])
+  /// over using this constructor directly.
   LlmPlugin(this._provider, this._initConfig);
 
   // ── Factory methods ────────────────────────────────────────────────────
 
-  /// Tworzy plugin z lokalnym modelem GGUF z obsługą Isolate.
+  /// Creates a plugin with a local GGUF model backed by an Isolate.
   ///
-  /// Generowanie odbywa się w osobnym Isolate ([LlamaParent]),
-  /// co gwarantuje brak blokowania wątku UI nawet przy dużych modelach.
+  /// Generation runs in a separate Isolate ([LlamaParent]),
+  /// guaranteeing no UI thread blocking even with large models.
   ///
-  /// [modelPath] — ścieżka bezwzględna do pliku .gguf
-  /// [config] — opcjonalna konfiguracja (temperatura, GPU layers, kontekst itp.)
+  /// [modelPath] — absolute path to the .gguf file
+  /// [config] — optional configuration (temperature, GPU layers, context, etc.)
   factory LlmPlugin.localGGUF({
     required String modelPath,
     LlmConfig? config,
@@ -79,14 +79,14 @@ class LlmPlugin {
     );
   }
 
-  /// Tworzy plugin z OpenAI API (streaming przez SSE).
+  /// Creates a plugin with the OpenAI API (streaming via SSE).
   ///
-  /// **Uwaga:** [OpenAIProvider] jest obecnie szkieletem.
-  /// Metody rzucają [UnimplementedError] do czasu pełnej implementacji.
+  /// **Note:** [OpenAIProvider] is currently a skeleton.
+  /// Methods throw [UnimplementedError] until fully implemented.
   ///
-  /// [apiKey] — klucz API OpenAI (format: "sk-...")
-  /// [model] — nazwa modelu (domyślnie: "gpt-4o-mini")
-  /// [baseUrl] — opcjonalny URL bazowy (np. Azure OpenAI endpoint)
+  /// [apiKey] — OpenAI API key (format: "sk-...")
+  /// [model] — model name (default: "gpt-4o-mini")
+  /// [baseUrl] — optional base URL (e.g. Azure OpenAI endpoint)
   factory LlmPlugin.openAI({
     required String apiKey,
     String model = 'gpt-4o-mini',
@@ -102,13 +102,13 @@ class LlmPlugin {
     );
   }
 
-  /// Tworzy plugin z niestandardowym dostawcą.
+  /// Creates a plugin with a custom provider.
   ///
-  /// Przydatne do testowania (mock providerów) i własnych integracji
-  /// (Anthropic, Google Gemini, Ollama itp.).
+  /// Useful for testing (mock providers) and custom integrations
+  /// (Anthropic, Google Gemini, Ollama, etc.).
   ///
   /// ```dart
-  /// // Przykład z mockiem w testach
+  /// // Example with a mock in tests
   /// final plugin = LlmPlugin.custom(
   ///   provider: MockLLMProvider(),
   ///   config: {'modelPath': 'fake.gguf'},
@@ -123,20 +123,20 @@ class LlmPlugin {
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
 
-  /// Inicjalizuje plugin (ładuje model / konfiguruje API).
+  /// Initializes the plugin (loads model / configures API).
   ///
-  /// Musi być wywołane przed użyciem [sendPrompt] lub [sendPromptStream].
-  /// Kolejne wywołania są ignorowane (idempotentne).
+  /// Must be called before using [sendPrompt] or [sendPromptStream].
+  /// Subsequent calls are ignored (idempotent).
   Future<void> initialize() async {
     if (_isInitialized) return;
     await _provider.initialize(_initConfig);
     _isInitialized = true;
   }
 
-  /// Zwalnia wszystkie zasoby.
+  /// Releases all resources.
   ///
-  /// Po wywołaniu plugin nie może być ponownie użyty.
-  /// Bezpieczne do wywołania wielokrotnego.
+  /// After calling this, the plugin cannot be used again.
+  /// Safe to call multiple times.
   Future<void> dispose() async {
     if (!_isInitialized) return;
     await _provider.dispose();
@@ -145,12 +145,12 @@ class LlmPlugin {
 
   // ── Generation API ─────────────────────────────────────────────────────
 
-  /// Wysyła prompt i zwraca stream surowych tokenów (String).
+  /// Sends a prompt and returns a stream of raw tokens (String).
   ///
-  /// Najprostsza metoda — bez metryk wydajności.
-  /// Stream jest bezpieczny dla wątku UI.
+  /// Simplest method — no performance metrics.
+  /// The stream is UI-thread-safe.
   ///
-  /// [parameters] — opcjonalne parametry specyficzne dla providera
+  /// [parameters] — optional provider-specific parameters
   Stream<String> sendPrompt(
     String prompt, {
     Map<String, dynamic>? parameters,
@@ -159,18 +159,18 @@ class LlmPlugin {
     return _provider.sendPrompt(prompt, parameters: parameters);
   }
 
-  /// Wysyła prompt i zwraca stream [StreamingChunk] z live metrics.
+  /// Sends a prompt and returns a stream of [StreamingChunk] with live metrics.
   ///
-  /// Dekoruje `Stream<String>` z providera, wzbogacając każdy token
-  /// o aktualne metryki wydajności obliczane w locie.
+  /// Decorates the `Stream<String>` from the provider, enriching each token
+  /// with current performance metrics computed on the fly.
   ///
-  /// Każdy [StreamingChunk] zawiera:
-  ///   - [StreamingChunk.text] — fragment tekstu (pusty dla finalnego chunku)
-  ///   - [StreamingChunk.metrics] — aktualne metryki (t/s, ms/token, łączny czas)
-  ///   - [StreamingChunk.isFinal] — `true` dla ostatniego chunku ze zbiorczymi metrykami
+  /// Each [StreamingChunk] contains:
+  ///   - [StreamingChunk.text] — text fragment (empty for the final chunk)
+  ///   - [StreamingChunk.metrics] — current metrics (t/s, ms/token, total time)
+  ///   - [StreamingChunk.isFinal] — `true` for the last chunk with aggregate metrics
   ///
-  /// Zalecana metoda dla warstwy UI — umożliwia wyświetlanie tokenów
-  /// w czasie rzeczywistym wraz z paskiem metryk wydajności.
+  /// Recommended method for the UI layer — allows displaying tokens
+  /// in real time alongside a performance metrics bar.
   Stream<StreamingChunk> sendPromptStream(
     String prompt, {
     Map<String, dynamic>? parameters,
@@ -180,9 +180,9 @@ class LlmPlugin {
     final startTime = DateTime.now();
     int totalTokenCount = 0;
 
-    // StreamTransformer dekoruje surowy Stream<String> o metryki.
-    // Obliczenia metryk są lekkie (szacowanie tokenów + datetime) —
-    // mogą bezpiecznie wykonywać się na UI thread.
+    // StreamTransformer decorates the raw Stream<String> with metrics.
+    // Metric computations are lightweight (token estimation + datetime) —
+    // they can safely run on the UI thread.
     return _provider
         .sendPrompt(prompt, parameters: parameters)
         .transform(
@@ -203,7 +203,7 @@ class LlmPlugin {
               ));
             },
             handleDone: (sink) {
-              // Finalny chunk — puste text, kompletne metryki podsumowujące
+              // Final chunk — empty text, complete summary metrics
               final finalMetrics = PerformanceMetrics.fromGeneration(
                 tokenCount: totalTokenCount,
                 startTime: startTime,
@@ -224,20 +224,20 @@ class LlmPlugin {
         );
   }
 
-  // ── Gettery ────────────────────────────────────────────────────────────
+  // ── Getters ────────────────────────────────────────────────────────────
 
-  /// Czy plugin jest zainicjalizowany i gotowy do generowania
+  /// Whether the plugin is initialized and ready for generation
   bool get isInitialized => _isInitialized;
 
-  /// Aktywny provider (przydatne do inspekcji w testach)
+  /// Active provider (useful for inspection in tests)
   LLMProvider get provider => _provider;
 
-  // ── Prywatne helpers ───────────────────────────────────────────────────
+  // ── Private helpers ────────────────────────────────────────────────────
 
   void _ensureInitialized() {
     if (!_isInitialized) {
       throw StateError(
-        'LlmPlugin nie jest zainicjalizowany. Wywołaj initialize() najpierw.',
+        'LlmPlugin is not initialized. Call initialize() first.',
       );
     }
   }

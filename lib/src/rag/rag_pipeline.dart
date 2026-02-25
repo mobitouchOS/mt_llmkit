@@ -9,18 +9,18 @@ import 'vector_store/vector_store.dart';
 
 // ── Progress models ───────────────────────────────────────────────────────────
 
-/// Postęp ingestii dokumentu (chunking + embedding).
+/// Progress of document ingestion (chunking + embedding).
 class RagIngestionProgress {
-  /// Całkowita liczba chunków do zaembeddowania
+  /// Total number of chunks to be embedded
   final int totalChunks;
 
-  /// Liczba chunków już zaembeddowanych
+  /// Number of chunks already embedded
   final int embeddedChunks;
 
-  /// Podgląd tekstu aktualnie przetwarzanego chunku (max 60 znaków)
+  /// Preview of the text of the chunk currently being processed (max 60 chars)
   final String currentPreview;
 
-  /// Czy ingestia dobiegła końca
+  /// Whether ingestion has completed
   final bool isComplete;
 
   const RagIngestionProgress({
@@ -30,7 +30,7 @@ class RagIngestionProgress {
     this.isComplete = false,
   });
 
-  /// Ułamek ukończenia (0.0–1.0)
+  /// Completion fraction (0.0–1.0)
   double get fraction =>
       totalChunks > 0 ? embeddedChunks / totalChunks : 0.0;
 
@@ -42,29 +42,29 @@ class RagIngestionProgress {
 
 // ── RagPipeline ───────────────────────────────────────────────────────────────
 
-/// Orkiestrator pipeline'u RAG (Retrieval-Augmented Generation).
+/// Orchestrator for the RAG (Retrieval-Augmented Generation) pipeline.
 ///
-/// ## Wzorzec DI
+/// ## DI pattern
 ///
-/// Przyjmuje przez konstruktor:
-/// - [EmbeddingProvider] — generowanie wektorów dla chunków i zapytań
-/// - [VectorStore] — przechowywanie i wyszukiwanie wektorów
-/// - [LlmPlugin] — generowanie odpowiedzi na podstawie kontekstu
-/// - [TextChunker] — podział dokumentów na chunki (opcjonalny)
+/// Accepts via constructor:
+/// - [EmbeddingProvider] — vector generation for chunks and queries
+/// - [VectorStore] — vector storage and search
+/// - [LlmPlugin] — response generation based on context
+/// - [TextChunker] — document splitting into chunks (optional)
 ///
-/// ## Pipeline ingestii
+/// ## Ingestion pipeline
 ///
 /// ```
 /// Document → TextChunker → chunks → EmbeddingProvider.embed() → VectorStore.addChunks()
 /// ```
 ///
-/// ## Pipeline zapytania
+/// ## Query pipeline
 ///
 /// ```
 /// question → embed() → VectorStore.search() → build prompt → LlmPlugin.sendPromptStream()
 /// ```
 ///
-/// ## Przykład użycia
+/// ## Usage example
 ///
 /// ```dart
 /// final pipeline = RagPipeline(
@@ -73,18 +73,18 @@ class RagIngestionProgress {
 ///   generationPlugin: LlmPlugin.localGGUF(modelPath: '/path/to/llama.gguf'),
 /// );
 ///
-/// // Inicjalizacja
+/// // Initialization
 /// await pipeline.embeddingProvider.initialize({'modelPath': '/path/to/embed.gguf'});
 /// await pipeline.generationPlugin.initialize();
 ///
-/// // Ingestia dokumentu
-/// final doc = Document.fromText(text, source: 'plik.txt');
+/// // Document ingestion
+/// final doc = Document.fromText(text, source: 'file.txt');
 /// await for (final progress in pipeline.ingestDocument(doc)) {
 ///   print('${progress.embeddedChunks}/${progress.totalChunks}');
 /// }
 ///
-/// // Zapytanie z RAG
-/// await for (final chunk in pipeline.query('Co to jest RAG?')) {
+/// // RAG query
+/// await for (final chunk in pipeline.query('What is RAG?')) {
 ///   print(chunk.text);
 /// }
 /// ```
@@ -95,14 +95,14 @@ class RagPipeline {
   final TextChunker chunker;
   final String promptTemplate;
 
-  /// Domyślny template promptu RAG z placeholderami `{context}` i `{question}`.
+  /// Default RAG prompt template with `{context}` and `{question}` placeholders.
   ///
-  /// Kontekst budowany jest z `topK` najlepiej pasujących chunków,
-  /// oddzielonych `---`.
+  /// Context is built from the `topK` best-matching chunks,
+  /// separated by `---`.
   static const String defaultPromptTemplate =
-      'Na podstawie poniższego kontekstu odpowiedz na pytanie. '
-      'Jeśli odpowiedź nie wynika z kontekstu, powiedz o tym wprost — nie wymyślaj informacji.\n'
-      '\nKONTEKST:\n{context}\n\nPYTANIE: {question}\n\nODPOWIEDZ:';
+      'Based on the context below, answer the question. '
+      'If the answer cannot be derived from the context, say so explicitly — do not make up information.\n'
+      '\nCONTEXT:\n{context}\n\nQUESTION: {question}\n\nANSWER:';
 
   RagPipeline({
     required this.embeddingProvider,
@@ -113,11 +113,11 @@ class RagPipeline {
   })  : chunker = chunker ?? const TextChunker(),
         promptTemplate = promptTemplate ?? defaultPromptTemplate;
 
-  // ── Ingestia ──────────────────────────────────────────────────────────────
+  // ── Ingestion ─────────────────────────────────────────────────────────────
 
-  /// Dzieli [document] na chunki, generuje embeddingi i zapisuje do [vectorStore].
+  /// Splits [document] into chunks, generates embeddings, and saves to [vectorStore].
   ///
-  /// Zwraca stream [RagIngestionProgress] — można śledzić postęp w UI:
+  /// Returns a stream of [RagIngestionProgress] — progress can be tracked in the UI:
   ///
   /// ```dart
   /// await for (final p in pipeline.ingestDocument(doc)) {
@@ -125,26 +125,26 @@ class RagPipeline {
   /// }
   /// ```
   ///
-  /// Po zakończeniu ostatni event ma [RagIngestionProgress.isComplete] = true.
+  /// After completion the last event has [RagIngestionProgress.isComplete] = true.
   Stream<RagIngestionProgress> ingestDocument(Document document) async* {
     if (!embeddingProvider.isInitialized) {
       throw StateError(
-        'EmbeddingProvider nie jest zainicjalizowany. '
-        'Wywołaj embeddingProvider.initialize() przed ingestią.',
+        'EmbeddingProvider is not initialized. '
+        'Call embeddingProvider.initialize() before ingestion.',
       );
     }
 
-    // Krok 1: podział na chunki
+    // Step 1: split into chunks
     final chunks = chunker.chunk(document);
     if (chunks.isEmpty) return;
 
     yield RagIngestionProgress(
       totalChunks: chunks.length,
       embeddedChunks: 0,
-      currentPreview: 'Dzielenie na ${chunks.length} chunków...',
+      currentPreview: 'Splitting into ${chunks.length} chunks...',
     );
 
-    // Krok 2: embedding każdego chunku
+    // Step 2: embed each chunk
     for (int i = 0; i < chunks.length; i++) {
       final chunk = chunks[i];
       chunk.embedding = await embeddingProvider.embed(chunk.text);
@@ -158,48 +158,48 @@ class RagPipeline {
       );
     }
 
-    // Krok 3: zapis do VectorStore (z automatycznym persist jeśli skonfigurowane)
+    // Step 3: save to VectorStore (with automatic persist if configured)
     await vectorStore.addChunks(chunks);
 
     yield RagIngestionProgress(
       totalChunks: chunks.length,
       embeddedChunks: chunks.length,
-      currentPreview: 'Zapisano ${chunks.length} chunków do indeksu.',
+      currentPreview: 'Saved ${chunks.length} chunks to the index.',
       isComplete: true,
     );
   }
 
-  // ── Zapytanie ─────────────────────────────────────────────────────────────
+  // ── Query ─────────────────────────────────────────────────────────────────
 
-  /// Wyszukuje relevantne chunki i generuje odpowiedź przez [generationPlugin].
+  /// Retrieves relevant chunks and generates a response via [generationPlugin].
   ///
-  /// Zwraca [Stream<StreamingChunk>] — tokeny odpowiedzi pojawiają się na bieżąco.
+  /// Returns [Stream<StreamingChunk>] — response tokens appear as they are generated.
   ///
-  /// [topK] — liczba chunków kontekstu (domyślnie 5)
-  /// [minSimilarity] — minimalne podobieństwo do włączenia w kontekst (0.0–1.0)
+  /// [topK] — number of context chunks (default 5)
+  /// [minSimilarity] — minimum similarity to include in context (0.0–1.0)
   ///
-  /// Rzuca [StateError] jeśli żaden dokument nie jest zaindeksowany.
+  /// Throws [StateError] if no documents are indexed.
   Stream<StreamingChunk> query(
     String question, {
     int topK = 5,
     double minSimilarity = 0.25,
   }) async* {
     if (!embeddingProvider.isInitialized) {
-      throw StateError('EmbeddingProvider nie jest zainicjalizowany.');
+      throw StateError('EmbeddingProvider is not initialized.');
     }
     if (!generationPlugin.isInitialized) {
-      throw StateError('GenerationPlugin nie jest zainicjalizowany.');
+      throw StateError('GenerationPlugin is not initialized.');
     }
     if (vectorStore.indexedSize == 0) {
       throw StateError(
-        'Baza wektorów jest pusta. Dodaj dokumenty przez ingestDocument().',
+        'Vector store is empty. Add documents via ingestDocument().',
       );
     }
 
-    // Krok 1: embed zapytania
+    // Step 1: embed the query
     final queryEmbedding = await embeddingProvider.embed(question);
 
-    // Krok 2: znajdź relevantne chunki
+    // Step 2: find relevant chunks
     final results = await vectorStore.search(
       queryEmbedding,
       topK: topK,
@@ -207,38 +207,38 @@ class RagPipeline {
     );
 
     if (results.isEmpty) {
-      // Fallback: odpowiedź bez kontekstu z informacją dla użytkownika
+      // Fallback: respond without context, inform the user
       yield* generationPlugin.sendPromptStream(
-        'Nie znaleziono relevantnych informacji w bazie wiedzy dla pytania: "$question". '
-        'Poinformuj użytkownika, że baza nie zawiera odpowiednich danych.',
+        'No relevant information was found in the knowledge base for the question: "$question". '
+        'Inform the user that the knowledge base does not contain relevant data.',
       );
       return;
     }
 
-    // Krok 3: buduj prompt z kontekstem
+    // Step 3: build prompt with context
     final contextParts = results.map((r) {
       final source = r.chunk.metadata['documentTitle'] ?? r.chunk.documentId;
-      return '[$source, podobieństwo: ${(r.similarity * 100).toStringAsFixed(0)}%]\n${r.chunk.text}';
+      return '[$source, similarity: ${(r.similarity * 100).toStringAsFixed(0)}%]\n${r.chunk.text}';
     }).join('\n\n---\n\n');
 
     final augmentedPrompt = promptTemplate
         .replaceAll('{context}', contextParts)
         .replaceAll('{question}', question);
 
-    // Krok 4: generuj streaming odpowiedź
+    // Step 4: generate streaming response
     yield* generationPlugin.sendPromptStream(augmentedPrompt);
   }
 
-  /// Wyszukuje relevantne chunki dla [question] bez generowania odpowiedzi.
+  /// Retrieves relevant chunks for [question] without generating a response.
   ///
-  /// Przydatne do inspekcji — sprawdzenia co RAG znalazł w bazie.
+  /// Useful for inspection — checking what the RAG found in the store.
   Future<List<VectorSearchResult>> findRelevant(
     String question, {
     int topK = 5,
     double minSimilarity = 0.0,
   }) async {
     if (!embeddingProvider.isInitialized) {
-      throw StateError('EmbeddingProvider nie jest zainicjalizowany.');
+      throw StateError('EmbeddingProvider is not initialized.');
     }
     final queryEmbedding = await embeddingProvider.embed(question);
     return vectorStore.search(
@@ -250,15 +250,15 @@ class RagPipeline {
 
   // ── Persistence ───────────────────────────────────────────────────────────
 
-  /// Ładuje indeks wektorów z pliku JSON i ustawia ścieżkę auto-save.
+  /// Loads the vector index from a JSON file and sets the auto-save path.
   Future<void> loadIndex(String path) => vectorStore.load(path);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-  /// Zwalnia zasoby embedding providera i modelu generowania.
+  /// Releases the embedding provider and generation model resources.
   ///
-  /// Nie zwalnia VectorStore — dane w pamięci są zachowane do końca sesji
-  /// (i persisted na dysk jeśli autoSavePath był ustawiony).
+  /// Does not release VectorStore — in-memory data is preserved until end of session
+  /// (and persisted to disk if autoSavePath was set).
   Future<void> dispose() async {
     await embeddingProvider.dispose();
     await generationPlugin.dispose();

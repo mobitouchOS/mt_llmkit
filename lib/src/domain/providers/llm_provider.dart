@@ -1,12 +1,12 @@
 // lib/src/domain/providers/llm_provider.dart
 
-/// Abstrakcyjny interfejs dla wszystkich dostawców LLM.
+/// Abstract interface for all LLM providers.
 ///
-/// Wzorzec Strategy + Dependency Injection — każdy dostawca
-/// (lokalny GGUF, OpenAI, Anthropic, Google itp.) implementuje ten interfejs,
-/// co umożliwia podmianę dostawcy bez modyfikacji kodu klienta.
+/// Strategy + Dependency Injection pattern — each provider
+/// (local GGUF, OpenAI, Anthropic, Google, etc.) implements this interface,
+/// allowing the provider to be swapped without modifying client code.
 ///
-/// Typowy cykl życia:
+/// Typical lifecycle:
 /// ```dart
 /// final provider = LocalGGUFProvider();
 /// await provider.initialize({'modelPath': '/path/to/model.gguf'});
@@ -16,39 +16,39 @@
 /// await provider.dispose();
 /// ```
 abstract interface class LLMProvider {
-  /// Inicjalizuje dostawcę z podaną konfiguracją.
+  /// Initializes the provider with the given configuration.
   ///
-  /// Klucze mapy [config] są specyficzne dla każdego dostawcy:
+  /// Keys in [config] are provider-specific:
   ///
   /// **LocalGGUFProvider:**
-  ///   - `modelPath` (String, wymagany): ścieżka do pliku .gguf
-  ///   - `llmConfig` (LlmConfig, opcjonalny): parametry modelu (temp, nCtx itp.)
+  ///   - `modelPath` (String, required): path to the .gguf file
+  ///   - `llmConfig` (LlmConfig, optional): model parameters (temp, nCtx, etc.)
   ///
   /// **OpenAIProvider:**
-  ///   - `apiKey` (String, wymagany): klucz API (zaczyna się od "sk-")
-  ///   - `model` (String, opcjonalny): nazwa modelu (domyślnie "gpt-4o-mini")
-  ///   - `baseUrl` (String, opcjonalny): URL bazowy (np. Azure OpenAI)
+  ///   - `apiKey` (String, required): API key (starts with "sk-")
+  ///   - `model` (String, optional): model name (default: "gpt-4o-mini")
+  ///   - `baseUrl` (String, optional): base URL (e.g. Azure OpenAI)
   ///
-  /// Rzuca [ArgumentError] jeśli brakuje wymaganych kluczy.
-  /// Rzuca [FileSystemException] jeśli plik modelu nie istnieje (GGUF).
+  /// Throws [ArgumentError] if required keys are missing.
+  /// Throws [FileSystemException] if the model file does not exist (GGUF).
   Future<void> initialize(Map<String, dynamic> config);
 
-  /// Wysyła prompt i zwraca stream tokenów w czasie rzeczywistym.
+  /// Sends a prompt and returns a stream of tokens in real time.
   ///
-  /// Stream jest bezpieczny dla wątku UI — tokeny są generowane
-  /// asynchronicznie (Isolate lub HTTP) i dostarczane przez [StreamController].
+  /// The stream is UI-thread-safe — tokens are generated
+  /// asynchronously (Isolate or HTTP) and delivered via [StreamController].
   ///
-  /// Parametry [parameters] opcjonalne, specyficzne dla dostawcy:
-  ///   - `promptFormat` (PromptFormat): format promptu (dla GGUF)
-  ///   - `temperature` (double): temperatura próbkowania
-  ///   - `maxTokens` (int): maksymalna liczba tokenów do wygenerowania
-  ///   - `systemPrompt` (String): systemowy prompt (dla OpenAI)
+  /// Optional [parameters], provider-specific:
+  ///   - `promptFormat` (PromptFormat): prompt format (for GGUF)
+  ///   - `temperature` (double): sampling temperature
+  ///   - `maxTokens` (int): maximum number of tokens to generate
+  ///   - `systemPrompt` (String): system prompt (for OpenAI)
   ///
-  /// Rzuca [StateError] jeśli provider nie jest zainicjalizowany.
+  /// Throws [StateError] if the provider is not initialized.
   Stream<String> sendPrompt(String prompt, {Map<String, dynamic>? parameters});
 
-  /// Zwalnia wszystkie zasoby (Isolate, połączenia HTTP, pamięć modelu).
+  /// Releases all resources (Isolate, HTTP connections, model memory).
   ///
-  /// Po wywołaniu provider nie może być ponownie użyty.
+  /// After calling this, the provider cannot be used again.
   Future<void> dispose();
 }

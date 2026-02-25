@@ -11,22 +11,22 @@ import 'embedding_provider.dart';
 
 // ── Worker Isolate entry point ─────────────────────────────────────────────
 
-/// Wejście do worker isolate embeddingów.
+/// Entry point for the embedding worker isolate.
 ///
-/// ## Dlaczego własny Isolate zamiast LlamaParent?
+/// ## Why a custom Isolate instead of LlamaParent?
 ///
-/// `LlamaParent.getEmbeddings()` ulega crashowi z błędem:
+/// `LlamaParent.getEmbeddings()` crashes with the error:
 /// "Cannot invoke native callback from a different isolate."
 ///
-/// Przyczyna: `llama_decode` (wywoływane przez `Llama.getEmbeddings()`)
-/// trigguje natywny log callback zarejestrowany jako `NativeCallable.isolateLocal`.
-/// Jeśli ten callback był zarejestrowany w głównym Isolate, a wywołanie
-/// pochodzi z child Isolate (jak w `LlamaChild`), Dart VM rzuca fatal error.
+/// Cause: `llama_decode` (called by `Llama.getEmbeddings()`)
+/// triggers a native log callback registered as `NativeCallable.isolateLocal`.
+/// If that callback was registered in the main Isolate, but the call
+/// originates from a child Isolate (as in `LlamaChild`), the Dart VM throws a fatal error.
 ///
-/// Rozwiązanie: zbudować własny Isolate, w którym `LibraryLoader.initialize()`
-/// i konstruktor `Llama()` są wywołane **wewnątrz** tego Isolate.
-/// Dzięki temu `NativeCallable.isolateLocal` rejestruje callback powiązany
-/// z tym właśnie Isolate — wywołania FFI z tego Isolate są bezpieczne.
+/// Solution: build a custom Isolate in which `LibraryLoader.initialize()`
+/// and the `Llama()` constructor are called **inside** that Isolate.
+/// This way `NativeCallable.isolateLocal` registers a callback bound
+/// to that very Isolate — FFI calls from that Isolate are safe.
 void _embeddingWorkerMain(Map<String, dynamic> args) {
   final String modelPath = args['modelPath'] as String;
   final int nGpuLayers = args['nGpuLayers'] as int;
@@ -35,8 +35,8 @@ void _embeddingWorkerMain(Map<String, dynamic> args) {
   final int nThreads = args['nThreads'] as int;
   final SendPort mainPort = args['sendPort'] as SendPort;
 
-  // KLUCZOWE: wywołaj LibraryLoader.initialize() TUTAJ, w tym Isolate.
-  // Rejestruje to natywne callbacki (log, decode) powiązane z tym Isolate.
+  // CRITICAL: call LibraryLoader.initialize() HERE, inside this Isolate.
+  // This registers native callbacks (log, decode) bound to this Isolate.
   LibraryLoader.initialize();
 
   Llama? llama;
@@ -47,23 +47,23 @@ void _embeddingWorkerMain(Map<String, dynamic> args) {
         ..nGpuLayers = nGpuLayers
         ..mainGpu = -1,
       contextParams: ContextParams()
-        ..embeddings = true               // tryb embeddingów (wyłącza generowanie)
-        ..poolingType = LlamaPoolingType.mean  // mean pooling — standard dla RAG
+        ..embeddings = true               // embeddings mode (disables generation)
+        ..poolingType = LlamaPoolingType.mean  // mean pooling — standard for RAG
         ..nCtx = nCtx
         ..nBatch = nBatch
         ..nThreads = nThreads,
-      samplerParams: SamplerParams(),     // irrelevant w trybie embeddings
+      samplerParams: SamplerParams(),     // irrelevant in embeddings mode
     );
   } catch (e) {
     mainPort.send({'type': 'error', 'message': '$e'});
     return;
   }
 
-  // Poinformuj główny Isolate że model jest gotowy — wyślij swój SendPort
+  // Notify the main Isolate that the model is ready — send our SendPort
   final receivePort = ReceivePort();
   mainPort.send({'type': 'ready', 'port': receivePort.sendPort});
 
-  // Pętla obsługi żądań — worker żyje przez cały czas lifecycle providera
+  // Request handling loop — the worker lives for the entire provider lifecycle
   receivePort.listen((dynamic message) {
     if (message is! Map<String, dynamic>) return;
 
@@ -72,8 +72,8 @@ void _embeddingWorkerMain(Map<String, dynamic> args) {
         final text = message['text'] as String;
         final replyPort = message['replyPort'] as SendPort;
         try {
-          // getEmbeddings() działa bezpiecznie tutaj — callback zarejestrowany
-          // w TYM Isolate, więc nie ma konfliktu isolate/callback
+          // getEmbeddings() is safe here — callback registered
+          // in THIS Isolate, so there is no isolate/callback conflict
           final embedding = llama!.getEmbeddings(text);
           replyPort.send({'type': 'ok', 'embedding': embedding});
         } catch (e) {
@@ -89,37 +89,37 @@ void _embeddingWorkerMain(Map<String, dynamic> args) {
 
 // ── LlamaEmbeddingProvider ─────────────────────────────────────────────────
 
-/// Implementacja [EmbeddingProvider] używająca lokalnego modelu GGUF
-/// przez llama.cpp w dedykowanym Dart Isolate.
+/// Implementation of [EmbeddingProvider] using a local GGUF model
+/// via llama.cpp in a dedicated Dart Isolate.
 ///
-/// ## Architektura — własny Isolate (nie LlamaParent)
+/// ## Architecture — custom Isolate (not LlamaParent)
 ///
 /// ```
 /// embed(text)
 ///    │  SendPort.send({'type': 'embed', 'text': text, 'replyPort': ...})
 ///    ▼
 /// Worker Isolate
-///    │  LibraryLoader.initialize()  ← log callbacks w tym Isolate
+///    │  LibraryLoader.initialize()  ← log callbacks in this Isolate
 ///    │  Llama(path, embeddings=true)
-///    │  llama.getEmbeddings(text)   ← bezpieczne FFI
+///    │  llama.getEmbeddings(text)   ← safe FFI
 ///    │  SendPort.send({'type': 'ok', 'embedding': [...]})
 ///    ▼
-/// List<double>                      ← wynik w głównym Isolate
+/// List<double>                      ← result in the main Isolate
 /// ```
 ///
-/// ## Wymagany model
+/// ## Required model
 ///
-/// Dedykowany model embeddingów w formacie GGUF:
-/// - `nomic-embed-text-v1.5.Q4_K_M.gguf` (~270MB) — rekomendowany
-/// - `bge-small-en-v1.5.Q4_K_M.gguf` (~67MB) — mniejszy, nieco słabszy
+/// A dedicated embeddings model in GGUF format:
+/// - `nomic-embed-text-v1.5.Q4_K_M.gguf` (~270MB) — recommended
+/// - `bge-small-en-v1.5.Q4_K_M.gguf` (~67MB) — smaller, slightly weaker
 ///
-/// ## Użycie
+/// ## Usage
 ///
 /// ```dart
 /// final provider = LlamaEmbeddingProvider();
 /// await provider.initialize({'modelPath': '/path/to/nomic-embed.gguf'});
 ///
-/// final vec = await provider.embed('Jaka jest stolica Polski?');
+/// final vec = await provider.embed('What is the capital of Poland?');
 /// print(vec.length);  // 768
 ///
 /// await provider.dispose();
@@ -130,27 +130,27 @@ class LlamaEmbeddingProvider implements EmbeddingProvider {
   int _dimensions = 0;
   bool _isInitialized = false;
 
-  /// Inicjalizuje provider — spawuje worker Isolate i ładuje model.
+  /// Initializes the provider — spawns the worker Isolate and loads the model.
   ///
-  /// Wymagane klucze w [config]:
-  ///   - `modelPath` (String): ścieżka do pliku .gguf modelu embeddingów
+  /// Required keys in [config]:
+  ///   - `modelPath` (String): path to the .gguf embeddings model file
   ///
-  /// Opcjonalne klucze:
-  ///   - `llmConfig` (LlmConfig): nadpisuje domyślne parametry
-  ///   - `nCtx` (int): rozmiar kontekstu (domyślnie 512 — wystarczy dla embeddingów)
+  /// Optional keys:
+  ///   - `llmConfig` (LlmConfig): overrides default parameters
+  ///   - `nCtx` (int): context size (default 512 — sufficient for embeddings)
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
     final modelPath = config['modelPath'] as String?;
     if (modelPath == null || modelPath.isEmpty) {
-      throw ArgumentError('Klucz "modelPath" jest wymagany dla embedding provider');
+      throw ArgumentError('Key "modelPath" is required for embedding provider');
     }
     if (!File(modelPath).existsSync()) {
-      throw FileSystemException('Plik modelu embeddingów nie istnieje', modelPath);
+      throw FileSystemException('Embedding model file does not exist', modelPath);
     }
 
     final llmConfig = config['llmConfig'] as LlmConfig? ?? const LlmConfig();
 
-    // Port do odbioru odpowiedzi inicjalizacyjnej
+    // Port for receiving the initialization response
     final initReceivePort = ReceivePort();
 
     _isolate = await Isolate.spawn(
@@ -166,7 +166,7 @@ class LlamaEmbeddingProvider implements EmbeddingProvider {
       debugName: 'llmcpp_EmbeddingWorker',
     );
 
-    // Czekamy na 'ready' lub 'error' z worker Isolate
+    // Wait for 'ready' or 'error' from the worker Isolate
     final initResponse = await initReceivePort.first as Map<String, dynamic>;
     initReceivePort.close();
 
@@ -174,26 +174,26 @@ class LlamaEmbeddingProvider implements EmbeddingProvider {
       _isolate?.kill();
       _isolate = null;
       throw Exception(
-        'Błąd ładowania modelu embeddingów: ${initResponse['message']}',
+        'Failed to load embedding model: ${initResponse['message']}',
       );
     }
 
     _workerPort = initResponse['port'] as SendPort;
 
-    // Ustal wymiarowość wektora przez testowy embed
+    // Determine vector dimensionality via a test embed
     final testVec = await embed('dimension_probe');
     _dimensions = testVec.length;
     _isInitialized = true;
   }
 
-  /// Generuje wektor embeddingu dla [text].
+  /// Generates an embedding vector for [text].
   ///
-  /// Wywołanie jest nieblokujące — kompute odbywa się w worker Isolate.
+  /// Non-blocking — computation runs in the worker Isolate.
   @override
   Future<List<double>> embed(String text) async {
     if (_workerPort == null) {
       throw StateError(
-        'EmbeddingProvider nie jest zainicjalizowany. Wywołaj initialize() najpierw.',
+        'EmbeddingProvider is not initialized. Call initialize() first.',
       );
     }
 
@@ -208,17 +208,17 @@ class LlamaEmbeddingProvider implements EmbeddingProvider {
     replyPort.close();
 
     if (response['type'] == 'error') {
-      throw Exception('Błąd generowania embeddingu: ${response['message']}');
+      throw Exception('Embedding generation failed: ${response['message']}');
     }
 
-    // embedding może być Float64List lub List<double> — normalizujemy
+    // embedding may be Float64List or List<double> — normalise
     final raw = response['embedding'] as List;
     return raw.map((e) => (e as num).toDouble()).toList();
   }
 
-  /// Generuje embeddingi dla wielu tekstów sekwencyjnie.
+  /// Generates embeddings for multiple texts sequentially.
   ///
-  /// Każde wywołanie jest nieblokujące — UI może aktualizować się między nimi.
+  /// Each call is non-blocking — the UI can update between them.
   @override
   Future<List<List<double>>> embedBatch(List<String> texts) async {
     final results = <List<double>>[];
@@ -245,9 +245,9 @@ class LlamaEmbeddingProvider implements EmbeddingProvider {
   @override
   bool get isInitialized => _isInitialized;
 
-  // ── Prywatne helpery ─────────────────────────────────────────────────────
+  // ── Private helpers ──────────────────────────────────────────────────────
 
-  /// Obcina tekst do ~2000 znaków (≈ 512 tokenów — limit kontekstu embeddings).
+  /// Truncates text to ~2000 chars (≈ 512 tokens — embeddings context limit).
   String _truncateText(String text, {int maxChars = 2000}) {
     if (text.length <= maxChars) return text;
     final truncated = text.substring(0, maxChars);

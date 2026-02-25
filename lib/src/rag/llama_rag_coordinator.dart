@@ -1,19 +1,19 @@
 // lib/src/rag/llama_rag_coordinator.dart
 //
-// ARCHITEKTURA — dlaczego jeden izolat?
+// ARCHITECTURE — why a single isolate?
 //
-// llama.cpp przechowuje JEDEN globalny wskaźnik log callback (ustawiany przez
-// `llama_log_set`). Dart tworzy izolato-lokalne `Pointer.fromFunction<>()`
-// dla callbacków FFI — wywołanie takiego callbacku z innego izolatu powoduje
+// llama.cpp stores ONE global log callback pointer (set by `llama_log_set`).
+// Dart creates isolate-local `Pointer.fromFunction<>()` for FFI callbacks —
+// invoking such a callback from a different isolate causes a
 // FATAL CRASH: "Cannot invoke native callback from a different isolate."
 //
-// Gdy dwa izolaty (LlamaEmbeddingWorker + LlamaChild z LlamaParent) każdy
-// wywołują LibraryLoader.initialize() → llama_log_set(own_isolate_callback),
-// ostatni wygrywa wyścig. Wywołanie llama_decode przez "przegranego" niszczy
-// aplikację, bo próbuje uruchomić callback z obcego izolatu.
+// When two isolates (LlamaEmbeddingWorker + LlamaChild from LlamaParent) each
+// call LibraryLoader.initialize() → llama_log_set(own_isolate_callback),
+// the last one wins the race. A llama_decode call by the "loser" crashes
+// the app because it tries to invoke a callback from a foreign isolate.
 //
-// Rozwiązanie: JEDEN izolat zarządza oboma modelami. Jedno wywołanie
-// LibraryLoader.initialize() → jedna rejestracja log callback → brak wyścigu.
+// Solution: ONE isolate manages both models. A single call to
+// LibraryLoader.initialize() → one log callback registration → no race.
 
 import 'dart:async';
 import 'dart:io';
@@ -29,11 +29,11 @@ import 'embeddings/embedding_provider.dart';
 
 // ── Worker isolate ────────────────────────────────────────────────────────────
 
-/// Wejście do worker isolate — zarządza modelem embeddingów ORAZ generowania.
+/// Entry point for the worker isolate — manages both the embedding and generation models.
 ///
-/// Kluczowe: [LibraryLoader.initialize()] i oba konstruktory [Llama] są
-/// wywoływane WEWNĄTRZ tego izolatu, więc `Pointer.fromFunction<>()` (log
-/// callback) jest powiązany z tym właśnie izolatem. Brak konfliktu isolate.
+/// Key point: [LibraryLoader.initialize()] and both [Llama] constructors are
+/// called INSIDE this isolate, so `Pointer.fromFunction<>()` (log callback)
+/// is bound to this very isolate. No isolate conflict.
 void _llamaRagWorkerMain(Map<String, dynamic> args) {
   final String embedModelPath = args['embedModelPath'] as String;
   final String genModelPath = args['genModelPath'] as String;
@@ -49,7 +49,7 @@ void _llamaRagWorkerMain(Map<String, dynamic> args) {
   final double penaltyRepeat = (args['penaltyRepeat'] as num).toDouble();
   final SendPort mainPort = args['sendPort'] as SendPort;
 
-  // KLUCZOWE: jedno wywołanie w tym izolate — jeden log callback.
+  // CRITICAL: single call in this isolate — one log callback.
   LibraryLoader.initialize();
 
   Llama? embedModel;
@@ -150,7 +150,7 @@ void _llamaRagWorkerMain(Map<String, dynamic> args) {
   });
 }
 
-// ── Prywatne implementacje providerów ─────────────────────────────────────────
+// ── Private provider implementations ─────────────────────────────────────────
 
 class _CoordEmbeddingProvider implements EmbeddingProvider {
   final SendPort _workerPort;
@@ -162,7 +162,7 @@ class _CoordEmbeddingProvider implements EmbeddingProvider {
 
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
-    _isInitialized = true; // model już załadowany w koordynatorze
+    _isInitialized = true; // model already loaded in the coordinator
   }
 
   @override
@@ -176,7 +176,7 @@ class _CoordEmbeddingProvider implements EmbeddingProvider {
     final response = await replyPort.first as Map<String, dynamic>;
     replyPort.close();
     if (response['type'] == 'error') {
-      throw Exception('Błąd embeddingu: ${response['message']}');
+      throw Exception('Embedding error: ${response['message']}');
     }
     final raw = response['embedding'] as List;
     return raw.map((e) => (e as num).toDouble()).toList();
@@ -219,7 +219,7 @@ class _CoordGenerationProvider implements LLMProvider {
 
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
-    // model już załadowany w koordynatorze — no-op
+    // model already loaded in the coordinator — no-op
   }
 
   @override
@@ -250,7 +250,7 @@ class _CoordGenerationProvider implements LLMProvider {
           replyPort.close();
           if (!controller.isClosed) {
             controller.addError(
-              Exception('Błąd generowania: ${message['message']}'),
+              Exception('Generation error: ${message['message']}'),
             );
           }
       }
@@ -267,30 +267,30 @@ class _CoordGenerationProvider implements LLMProvider {
 
   @override
   Future<void> dispose() async {
-    // koordynator obsługuje dispose
+    // coordinator handles dispose
   }
 }
 
 // ── LlamaRagCoordinator ───────────────────────────────────────────────────────
 
-/// Koordynator zarządzający jednym worker isolate dla obu modeli llama.cpp.
+/// Coordinator managing a single worker isolate for both llama.cpp models.
 ///
 /// ## Problem
 ///
-/// `llama.cpp` przechowuje jeden globalny log callback. Dart tworzy
-/// izolato-lokalne `Pointer.fromFunction<>()` dla callbacków FFI. Gdy dwa
-/// izolaty (embedding + generowanie) równocześnie ustawiają `llama_log_set`,
-/// wywołanie llama_decode w jednym z nich próbuje uruchomić callback z innego
-/// izolatu → fatal crash: "Cannot invoke native callback from a different
+/// `llama.cpp` stores a single global log callback. Dart creates
+/// isolate-local `Pointer.fromFunction<>()` for FFI callbacks. When two
+/// isolates (embedding + generation) concurrently call `llama_log_set`,
+/// a llama_decode call in one of them tries to invoke the callback from the
+/// other isolate → fatal crash: "Cannot invoke native callback from a different
 /// isolate."
 ///
-/// ## Rozwiązanie
+/// ## Solution
 ///
-/// Jeden izolat ([_llamaRagWorkerMain]) ładuje oba modele — model embeddingów
-/// (z `embeddings=true`) i model generowania. Jedno wywołanie
-/// [LibraryLoader.initialize()] → jedna rejestracja log callback → brak wyścigu.
+/// One isolate ([_llamaRagWorkerMain]) loads both models — the embedding model
+/// (with `embeddings=true`) and the generation model. A single call to
+/// [LibraryLoader.initialize()] → one log callback registration → no race.
 ///
-/// ## Użycie
+/// ## Usage
 ///
 /// ```dart
 /// final coordinator = await LlamaRagCoordinator.create(
@@ -315,15 +315,15 @@ class LlamaRagCoordinator {
 
   LlamaRagCoordinator._();
 
-  /// Tworzy koordynatora i ładuje oba modele w jednym worker isolate.
+  /// Creates the coordinator and loads both models in a single worker isolate.
   ///
-  /// [embedModelPath] — ścieżka do pliku .gguf modelu embeddingów
-  /// [genModelPath]   — ścieżka do pliku .gguf modelu generowania
-  /// [genConfig]      — konfiguracja modelu generowania
-  /// [embedNCtx]      — rozmiar kontekstu embeddingów (domyślnie 512)
+  /// [embedModelPath] — path to the .gguf embeddings model file
+  /// [genModelPath]   — path to the .gguf generation model file
+  /// [genConfig]      — generation model configuration
+  /// [embedNCtx]      — embeddings context size (default 512)
   ///
-  /// Rzuca [FileSystemException] jeśli któryś z plików nie istnieje.
-  /// Rzuca [Exception] jeśli ładowanie modelu nie powiodło się.
+  /// Throws [FileSystemException] if either file does not exist.
+  /// Throws [Exception] if model loading fails.
   static Future<LlamaRagCoordinator> create({
     required String embedModelPath,
     required String genModelPath,
@@ -332,13 +332,13 @@ class LlamaRagCoordinator {
   }) async {
     if (!File(embedModelPath).existsSync()) {
       throw FileSystemException(
-        'Model embeddingów nie istnieje',
+        'Embedding model does not exist',
         embedModelPath,
       );
     }
     if (!File(genModelPath).existsSync()) {
       throw FileSystemException(
-        'Model generowania nie istnieje',
+        'Generation model does not exist',
         genModelPath,
       );
     }
@@ -390,7 +390,7 @@ class LlamaRagCoordinator {
 
     _workerPort = initMsg['port'] as SendPort;
 
-    // Sonduj wymiary embeddingów przez testowy embed
+    // Probe embedding dimensions via a test embed
     final tempProvider = _CoordEmbeddingProvider(_workerPort!, dimensions: 0);
     final probeVec = await tempProvider.embed('dim_probe');
 
@@ -399,22 +399,22 @@ class LlamaRagCoordinator {
       dimensions: probeVec.length,
     );
 
-    // Generation plugin — provider deleguje do worker isolate
+    // Generation plugin — provider delegates to the worker isolate
     final genProvider = _CoordGenerationProvider(_workerPort!);
     _generationPlugin = LlmPlugin.custom(provider: genProvider, config: const {});
-    await _generationPlugin.initialize(); // no-op w provider, ustawia isInitialized
+    await _generationPlugin.initialize(); // no-op in provider, sets isInitialized
   }
 
-  /// Provider embeddingów — komunikuje się z worker isolate.
+  /// Embedding provider — communicates with the worker isolate.
   EmbeddingProvider get embeddingProvider => _embeddingProvider;
 
-  /// Plugin generowania — komunikuje się z worker isolate.
+  /// Generation plugin — communicates with the worker isolate.
   LlmPlugin get generationPlugin => _generationPlugin;
 
-  /// Czy koordynator jest gotowy do użycia.
+  /// Whether the coordinator is ready for use.
   bool get isReady => _workerPort != null;
 
-  /// Zwalnia oba modele i kończy worker isolate.
+  /// Releases both models and terminates the worker isolate.
   Future<void> dispose() async {
     _workerPort?.send({'type': 'dispose'});
     await Future.delayed(const Duration(milliseconds: 200));

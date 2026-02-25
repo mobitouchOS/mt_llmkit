@@ -9,28 +9,28 @@ import '../../core/llm_config.dart';
 import '../../domain/providers/llm_provider.dart';
 import '../../native/library_loader.dart';
 
-/// Implementacja [LLMProvider] dla lokalnych modeli GGUF.
+/// Implementation of [LLMProvider] for local GGUF models.
 ///
-/// ## Architektura przepływu danych
+/// ## Data flow architecture
 ///
 /// ```
 /// UI Thread
 ///    │  listen()
 ///    ▼
-/// StreamController<String>   ← bezpieczna granica wątków
+/// StreamController<String>   ← safe thread boundary
 ///    ▲
 ///    │  add(token)
 /// LlamaParent.stream         ← Dart Isolate (llama.cpp FFI)
 ///    │
 ///    ▼
-/// llama.cpp native library   ← obliczenia CPU/GPU
+/// llama.cpp native library   ← CPU/GPU computation
 /// ```
 ///
-/// [LlamaParent] uruchamia generowanie w osobnym Isolate, co gwarantuje
-/// brak blokowania wątku UI. [StreamController.broadcast()] bezpiecznie
-/// przekazuje tokeny z Isolate do konsumentów na UI thread.
+/// [LlamaParent] runs generation in a separate Isolate, guaranteeing
+/// no UI thread blocking. [StreamController.broadcast()] safely
+/// passes tokens from the Isolate to consumers on the UI thread.
 ///
-/// ## Użycie
+/// ## Usage
 ///
 /// ```dart
 /// final provider = LocalGGUFProvider();
@@ -40,7 +40,7 @@ import '../../native/library_loader.dart';
 /// });
 ///
 /// await for (final token in provider.sendPrompt('Hello')) {
-///   print(token); // tokenyi pojawiają się na bieżąco
+///   print(token); // tokens appear as they are generated
 /// }
 ///
 /// await provider.dispose();
@@ -50,24 +50,24 @@ class LocalGGUFProvider implements LLMProvider {
   LlmConfig _config = const LlmConfig();
   bool _isInitialized = false;
 
-  /// Inicjalizuje provider — ładuje model GGUF do Isolate.
+  /// Initializes the provider — loads the GGUF model into an Isolate.
   ///
-  /// Wymagane klucze w [config]:
-  ///   - `modelPath` (String): ścieżka do pliku .gguf
+  /// Required keys in [config]:
+  ///   - `modelPath` (String): path to the .gguf file
   ///
-  /// Opcjonalne klucze:
-  ///   - `llmConfig` (LlmConfig): parametry modelu
+  /// Optional keys:
+  ///   - `llmConfig` (LlmConfig): model parameters
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
     final modelPath = config['modelPath'] as String?;
     if (modelPath == null || modelPath.isEmpty) {
-      throw ArgumentError('Klucz "modelPath" jest wymagany w konfiguracji');
+      throw ArgumentError('Key "modelPath" is required in configuration');
     }
     if (!File(modelPath).existsSync()) {
-      throw FileSystemException('Plik modelu nie istnieje', modelPath);
+      throw FileSystemException('Model file does not exist', modelPath);
     }
 
-    // Inicjalizacja natywnych bibliotek FFI dla bieżącej platformy
+    // Initialize FFI native libraries for the current platform
     LibraryLoader.initialize();
 
     _config = config['llmConfig'] as LlmConfig? ?? const LlmConfig();
@@ -90,20 +90,20 @@ class LocalGGUFProvider implements LLMProvider {
         ..penaltyRepeat = _config.penaltyRepeatDefault,
     );
 
-    // LlamaParent uruchamia llama.cpp w osobnym Isolate —
-    // ciężkie obliczenia nie blokują wątku UI
+    // LlamaParent runs llama.cpp in a separate Isolate —
+    // heavy computation does not block the UI thread
     _llamaParent = LlamaParent(loadCommand);
     await _llamaParent!.init();
     _isInitialized = true;
   }
 
-  /// Wysyła prompt do modelu i zwraca stream tokenów.
+  /// Sends a prompt to the model and returns a stream of tokens.
   ///
-  /// Generowanie odbywa się w Isolate. Tokeny są przekazywane do UI
-  /// przez [StreamController] — każdy `add()` jest bezpieczny dla wątku UI.
+  /// Generation runs in an Isolate. Tokens are passed to the UI
+  /// via [StreamController] — each `add()` is UI-thread-safe.
   ///
-  /// Opcjonalne klucze w [parameters]:
-  ///   - `promptFormat` (PromptFormat): format promptu
+  /// Optional keys in [parameters]:
+  ///   - `promptFormat` (PromptFormat): prompt format
   @override
   Stream<String> sendPrompt(
     String prompt, {
@@ -111,12 +111,12 @@ class LocalGGUFProvider implements LLMProvider {
   }) {
     if (!_isInitialized || _llamaParent == null) {
       throw StateError(
-        'Provider nie jest zainicjalizowany. Wywołaj initialize() najpierw.',
+        'Provider is not initialized. Call initialize() first.',
       );
     }
 
-    // StreamController.broadcast() — wiele listenerów może subskrybować
-    // i jest bezpieczny do użycia jako most między Isolate a UI thread
+    // StreamController.broadcast() — multiple listeners can subscribe
+    // and it is safe to use as a bridge between the Isolate and the UI thread
     final controller = StreamController<String>.broadcast();
 
     final promptFormat =
@@ -125,12 +125,12 @@ class LocalGGUFProvider implements LLMProvider {
 
     final formattedPrompt = promptFormat.formatPrompt(prompt);
 
-    // Wysyłamy prompt do Isolate — generowanie jest asynchroniczne
+    // Send the prompt to the Isolate — generation is asynchronous
     _llamaParent!.sendPrompt(formattedPrompt);
 
-    // Przekazujemy każdy token z Isolate stream do naszego StreamController.
-    // Dzięki temu UI subskrybuje jeden, dobrze zarządzany stream
-    // zamiast bezpośrednio pracować ze streamem Isolate.
+    // Forward each token from the Isolate stream to our StreamController.
+    // This way the UI subscribes to one well-managed stream
+    // instead of working directly with the Isolate stream.
     _llamaParent!.stream.listen(
       (token) {
         if (!controller.isClosed) {
@@ -160,6 +160,6 @@ class LocalGGUFProvider implements LLMProvider {
     _isInitialized = false;
   }
 
-  /// Czy provider jest zainicjalizowany i gotowy do generowania
+  /// Whether the provider is initialized and ready for generation
   bool get isInitialized => _isInitialized;
 }

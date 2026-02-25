@@ -2,38 +2,38 @@
 
 import '../../domain/providers/llm_provider.dart';
 
-/// Szkielet implementacji [LLMProvider] dla OpenAI API.
+/// Skeleton implementation of [LLMProvider] for the OpenAI API.
 ///
-/// ## Status: Niezaimplementowany — gotowy na integrację
+/// ## Status: Not implemented — ready for integration
 ///
-/// Metody rzucają [UnimplementedError] z instrukcjami TODO.
+/// Methods throw [UnimplementedError] with TODO instructions.
 ///
-/// ## Wymagania do pełnej implementacji
+/// ## Requirements for full implementation
 ///
-/// Dodaj zależności w `pubspec.yaml`:
+/// Add dependencies in `pubspec.yaml`:
 /// ```yaml
 /// dependencies:
-///   http: ^1.2.0          # lub dio: ^5.7.0
-///   # ewentualnie oficjalny klient:
+///   http: ^1.2.0          # or dio: ^5.7.0
+///   # alternatively the official client:
 ///   # openai_dart: ^0.4.0
 /// ```
 ///
-/// ## Docelowa architektura przepływu danych
+/// ## Target data flow architecture
 ///
 /// ```
 /// UI Thread
 ///    │  listen()
 ///    ▼
-/// StreamController<String>   ← bezpieczna granica
+/// StreamController<String>   ← safe boundary
 ///    ▲
 ///    │  add(token)
-/// SSE Parser                 ← parsowanie Server-Sent Events
+/// SSE Parser                 ← Server-Sent Events parsing
 ///    ▲
 ///    │  HTTP chunked response
 /// OpenAI API                 ← /v1/chat/completions?stream=true
 /// ```
 ///
-/// ## Przykład docelowego użycia (po implementacji)
+/// ## Target usage example (after implementation)
 ///
 /// ```dart
 /// final provider = OpenAIProvider();
@@ -53,52 +53,52 @@ class OpenAIProvider implements LLMProvider {
   String _model = 'gpt-4o-mini';
   String _baseUrl = 'https://api.openai.com/v1';
 
-  // TODO: Inicjalizuj klienta HTTP
+  // TODO: Initialize HTTP client
   // final http.Client _httpClient = http.Client();
 
-  /// Inicjalizuje OpenAI provider z kluczem API.
+  /// Initializes the OpenAI provider with an API key.
   ///
-  /// Wymagane klucze w [config]:
-  ///   - `apiKey` (String): klucz API OpenAI (format: "sk-...")
+  /// Required keys in [config]:
+  ///   - `apiKey` (String): OpenAI API key (format: "sk-...")
   ///
-  /// Opcjonalne klucze:
-  ///   - `model` (String): nazwa modelu (domyślnie: "gpt-4o-mini")
-  ///   - `baseUrl` (String): URL bazowy API (domyślnie: OpenAI, można zmienić np. na Azure)
+  /// Optional keys:
+  ///   - `model` (String): model name (default: "gpt-4o-mini")
+  ///   - `baseUrl` (String): base API URL (default: OpenAI, can be changed e.g. to Azure)
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
-    // TODO: Zaimplementuj inicjalizację OpenAI provider
+    // TODO: Implement OpenAI provider initialization
     //
-    // Krok 1: Wyodrębnij i zwaliduj klucz API
+    // Step 1: Extract and validate the API key
     // _apiKey = config['apiKey'] as String?;
     // if (_apiKey == null || _apiKey!.isEmpty) {
-    //   throw ArgumentError('Klucz "apiKey" jest wymagany');
+    //   throw ArgumentError('Key "apiKey" is required');
     // }
     // if (!_apiKey!.startsWith('sk-')) {
-    //   throw ArgumentError('Nieprawidłowy format klucza API OpenAI');
+    //   throw ArgumentError('Invalid OpenAI API key format');
     // }
     //
-    // Krok 2: Skonfiguruj opcjonalne parametry
+    // Step 2: Configure optional parameters
     // _model = config['model'] as String? ?? 'gpt-4o-mini';
     // _baseUrl = config['baseUrl'] as String? ?? 'https://api.openai.com/v1';
     //
-    // Krok 3 (opcjonalny): Sprawdź poprawność klucza przez test request
+    // Step 3 (optional): Validate the key via a test request
     // await _validateApiKey();
 
     throw UnimplementedError(
-      'OpenAI provider nie jest jeszcze zaimplementowany.\n'
-      'TODO: Dodaj pakiet "http" i zaimplementuj metodę initialize().',
+      'OpenAI provider is not yet implemented.\n'
+      'TODO: Add the "http" package and implement the initialize() method.',
     );
   }
 
-  /// Wysyła prompt do OpenAI API i zwraca stream tokenów przez SSE.
+  /// Sends a prompt to the OpenAI API and returns a token stream via SSE.
   ///
-  /// ## Plan implementacji (SSE streaming)
+  /// ## Implementation plan (SSE streaming)
   ///
   /// ```dart
-  /// // 1. Przygotuj body żądania
+  /// // 1. Prepare the request body
   /// final body = jsonEncode({
   ///   'model': _model,
-  ///   'stream': true,                          // włącz SSE streaming
+  ///   'stream': true,                          // enable SSE streaming
   ///   'messages': [
   ///     if (parameters?['systemPrompt'] != null)
   ///       {'role': 'system', 'content': parameters!['systemPrompt']},
@@ -108,14 +108,14 @@ class OpenAIProvider implements LLMProvider {
   ///   'max_tokens': parameters?['maxTokens'] ?? 1024,
   /// });
   ///
-  /// // 2. Wyślij żądanie HTTP z nagłówkiem Accept: text/event-stream
+  /// // 2. Send HTTP request with Accept: text/event-stream header
   /// final request = http.Request('POST', Uri.parse('$_baseUrl/chat/completions'))
   ///   ..headers['Authorization'] = 'Bearer $_apiKey'
   ///   ..headers['Content-Type'] = 'application/json'
   ///   ..headers['Accept'] = 'text/event-stream'
   ///   ..body = body;
   ///
-  /// // 3. Parsuj odpowiedź SSE i emituj tokeny
+  /// // 3. Parse the SSE response and emit tokens
   /// final controller = StreamController<String>();
   /// final response = await _httpClient.send(request);
   /// response.stream
@@ -133,39 +133,39 @@ class OpenAIProvider implements LLMProvider {
   /// return controller.stream;
   /// ```
   ///
-  /// Opcjonalne klucze w [parameters]:
+  /// Optional keys in [parameters]:
   ///   - `temperature` (double): 0.0–2.0
-  ///   - `maxTokens` (int): maksymalna liczba tokenów
-  ///   - `systemPrompt` (String): instrukcja systemowa
+  ///   - `maxTokens` (int): maximum number of tokens
+  ///   - `systemPrompt` (String): system instruction
   @override
   Stream<String> sendPrompt(
     String prompt, {
     Map<String, dynamic>? parameters,
   }) {
-    // TODO: Zaimplementuj SSE streaming z OpenAI API
-    // Patrz komentarz powyżej z przykładowym kodem
+    // TODO: Implement SSE streaming from the OpenAI API
+    // See the comment above for sample code
 
     throw UnimplementedError(
-      'OpenAI streaming nie jest jeszcze zaimplementowany.\n'
-      'TODO: Zaimplementuj parsowanie SSE z /v1/chat/completions.',
+      'OpenAI streaming is not yet implemented.\n'
+      'TODO: Implement SSE parsing from /v1/chat/completions.',
     );
   }
 
   @override
   Future<void> dispose() async {
-    // TODO: Zamknij klienta HTTP i anuluj oczekujące żądania
+    // TODO: Close the HTTP client and cancel pending requests
     // _httpClient.close();
     _apiKey = null;
   }
 
-  // ── Gettery diagnostyczne ──────────────────────────────────────────────
+  // ── Diagnostic getters ─────────────────────────────────────────────────
 
-  /// Nazwa aktualnie skonfigurowanego modelu
+  /// Name of the currently configured model
   String get currentModel => _model;
 
-  /// Bazowy URL API
+  /// Base API URL
   String get baseUrl => _baseUrl;
 
-  /// Czy provider posiada klucz API (nie sprawdza jego poprawności)
+  /// Whether the provider has an API key (does not validate it)
   bool get hasApiKey => _apiKey != null && _apiKey!.isNotEmpty;
 }
