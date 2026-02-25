@@ -6,39 +6,39 @@ import 'dart:io';
 import '../document/document_chunk.dart';
 import 'vector_store.dart';
 
-/// Implementacja [VectorStore] przechowująca chunki w pamięci RAM
-/// z **automatycznym zapisem** do pliku JSON.
+/// Implementation of [VectorStore] that stores chunks in RAM
+/// with **automatic persistence** to a JSON file.
 ///
 /// ## Persistence
 ///
-/// - Przy starcie: wywołaj [load(path)] aby odtworzyć indeks z poprzedniej sesji
-/// - Po każdym [addChunks] / [removeDocument] / [clear]: automatyczny zapis do [autoSavePath]
-/// - Format: JSON z listą chunków (text + embedding + metadata)
+/// - At startup: call [load(path)] to restore the index from a previous session
+/// - After each [addChunks] / [removeDocument] / [clear]: auto-save to [autoSavePath]
+/// - Format: JSON with a list of chunks (text + embedding + metadata)
 ///
-/// ## Wyszukiwanie
+/// ## Search
 ///
-/// Liniowe przeszukiwanie przez cosine similarity — odpowiednie dla
-/// tysięcy chunków. Dla > 100k chunków rozważ implementację z HNSW/Annoy.
+/// Linear scan via cosine similarity — suitable for
+/// thousands of chunks. For > 100k chunks consider an HNSW/Annoy implementation.
 ///
-/// ## Przykład
+/// ## Example
 ///
 /// ```dart
 /// final store = InMemoryVectorStore();
 ///
-/// // Wczytaj zapisany indeks (jeśli istnieje)
+/// // Load a saved index (if one exists)
 /// await store.load('/path/to/index.json');
 ///
-/// // Dodaj chunki z embeddingami
-/// await store.addChunks(chunks);  // automatyczny zapis po dodaniu
+/// // Add chunks with embeddings
+/// await store.addChunks(chunks);  // auto-saved after adding
 ///
-/// // Wyszukaj 5 najlepszych wyników
+/// // Search for the 5 best results
 /// final results = await store.search(queryEmbedding, topK: 5, minSimilarity: 0.3);
 /// ```
 class InMemoryVectorStore implements VectorStore {
   final List<DocumentChunk> _chunks = [];
 
-  /// Ścieżka do pliku JSON dla automatycznego zapisu.
-  /// Ustawiana przez [load()] lub manualnie przed [addChunks()].
+  /// Path to the JSON file for automatic saving.
+  /// Set by [load()] or manually before [addChunks()].
   String? autoSavePath;
 
   InMemoryVectorStore({this.autoSavePath});
@@ -51,10 +51,10 @@ class InMemoryVectorStore implements VectorStore {
     await _autoSave();
   }
 
-  /// Wyszukuje [topK] chunków najbardziej podobnych do [queryEmbedding].
+  /// Searches for [topK] chunks most similar to [queryEmbedding].
   ///
-  /// Algorytm: cosine similarity przez [VectorSimilarity.cosine].
-  /// Złożoność: O(n * d), gdzie n = liczba chunków, d = wymiarowość.
+  /// Algorithm: cosine similarity via [VectorSimilarity.cosine].
+  /// Complexity: O(n * d), where n = number of chunks, d = dimensionality.
   @override
   Future<List<VectorSearchResult>> search(
     List<double> queryEmbedding, {
@@ -71,15 +71,15 @@ class InMemoryVectorStore implements VectorStore {
         results.add(VectorSearchResult(
           chunk: chunk,
           similarity: similarity,
-          rank: 0, // wypełniany poniżej
+          rank: 0, // filled in below
         ));
       }
     }
 
-    // Sortuj malejąco po similarity
+    // Sort descending by similarity
     results.sort((a, b) => b.similarity.compareTo(a.similarity));
 
-    // Przypisz rankingi i ogranicz do topK
+    // Assign rankings and limit to topK
     final topResults = results.take(topK).toList();
     return List.generate(
       topResults.length,
@@ -100,7 +100,7 @@ class InMemoryVectorStore implements VectorStore {
   @override
   Future<void> clear() async {
     _chunks.clear();
-    // Usuń plik JSON jeśli istnieje
+    // Delete the JSON file if it exists
     if (autoSavePath != null) {
       final file = File(autoSavePath!);
       if (file.existsSync()) {
@@ -111,9 +111,9 @@ class InMemoryVectorStore implements VectorStore {
 
   // ── Persistence ────────────────────────────────────────────────────────
 
-  /// Wczytuje indeks z pliku JSON i ustawia [autoSavePath].
+  /// Loads the index from a JSON file and sets [autoSavePath].
   ///
-  /// Jeśli plik nie istnieje — baza pozostaje pusta (nie rzuca wyjątku).
+  /// If the file does not exist — the store remains empty (no exception thrown).
   @override
   Future<void> load(String path) async {
     autoSavePath = path;
@@ -132,12 +132,12 @@ class InMemoryVectorStore implements VectorStore {
 
       _chunks.addAll(loaded);
     } catch (e) {
-      // Uszkodzony plik — zacznij z pustą bazą, nie przerywaj działania
+      // Corrupted file — start with an empty store, do not interrupt execution
       _chunks.clear();
     }
   }
 
-  // ── Gettery ────────────────────────────────────────────────────────────
+  // ── Getters ────────────────────────────────────────────────────────────
 
   @override
   int get size => _chunks.length;
@@ -149,12 +149,12 @@ class InMemoryVectorStore implements VectorStore {
   List<String> get documentIds =>
       _chunks.map((c) => c.documentId).toSet().toList();
 
-  /// Wszystkie chunki (w tym bez embeddingów)
+  /// All chunks (including those without embeddings)
   List<DocumentChunk> get allChunks => List.unmodifiable(_chunks);
 
-  // ── Prywatne helpers ───────────────────────────────────────────────────
+  // ── Private helpers ────────────────────────────────────────────────────
 
-  /// Zapisuje aktualny stan do [autoSavePath] jeśli jest ustawiony.
+  /// Saves the current state to [autoSavePath] if it is set.
   Future<void> _autoSave() async {
     if (autoSavePath == null) return;
     await _persistTo(autoSavePath!);

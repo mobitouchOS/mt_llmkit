@@ -4,15 +4,15 @@ import 'dart:math' as math;
 
 import '../document/document_chunk.dart';
 
-/// Wynik wyszukiwania wektorowego — chunk z oceną podobieństwa.
+/// Vector search result — a chunk with a similarity score.
 class VectorSearchResult {
-  /// Znaleziony fragment dokumentu
+  /// Found document fragment
   final DocumentChunk chunk;
 
-  /// Podobieństwo kosinusowe do zapytania (0.0–1.0, wyższe = bardziej pasuje)
+  /// Cosine similarity to the query (0.0–1.0, higher = better match)
   final double similarity;
 
-  /// Pozycja w rankingu (1-based)
+  /// Position in the ranking (1-based)
   final int rank;
 
   const VectorSearchResult({
@@ -27,63 +27,63 @@ class VectorSearchResult {
       'chunk: ${chunk.id})';
 }
 
-/// Abstrakcyjny interfejs bazy wektorów.
+/// Abstract interface for a vector store.
 ///
-/// Przechowuje [DocumentChunk] z embeddingami i umożliwia wyszukiwanie
-/// semantyczne przez podobieństwo kosinusowe.
+/// Stores [DocumentChunk] instances with embeddings and enables
+/// semantic search via cosine similarity.
 ///
-/// ## Implementacje
+/// ## Implementations
 ///
-/// - [InMemoryVectorStore] — in-memory z automatycznym zapisem JSON
+/// - [InMemoryVectorStore] — in-memory with automatic JSON persistence
 abstract interface class VectorStore {
-  /// Dodaje wiele chunków do bazy.
+  /// Adds multiple chunks to the store.
   ///
-  /// Chunki bez [DocumentChunk.embedding] są ignorowane podczas wyszukiwania
-  /// (ale przechowywane — mogą być zaembeddowane później).
+  /// Chunks without [DocumentChunk.embedding] are ignored during search
+  /// (but stored — they can be embedded later).
   Future<void> addChunks(List<DocumentChunk> chunks);
 
-  /// Wyszukuje najbardziej pasujące chunki do [queryEmbedding].
+  /// Searches for chunks most similar to [queryEmbedding].
   ///
-  /// [topK] — liczba wyników do zwrócenia (domyślnie 5)
-  /// [minSimilarity] — minimalne podobieństwo (0.0–1.0), filtruje słabe wyniki
+  /// [topK] — number of results to return (default 5)
+  /// [minSimilarity] — minimum similarity (0.0–1.0), filters weak results
   Future<List<VectorSearchResult>> search(
     List<double> queryEmbedding, {
     int topK = 5,
     double minSimilarity = 0.0,
   });
 
-  /// Usuwa wszystkie chunki należące do dokumentu o danym [documentId].
+  /// Removes all chunks belonging to the document with the given [documentId].
   Future<void> removeDocument(String documentId);
 
-  /// Usuwa wszystkie chunki i czyści persistence.
+  /// Removes all chunks and clears persistence.
   Future<void> clear();
 
-  /// Ładuje bazę wektorów z pliku JSON.
+  /// Loads the vector store from a JSON file.
   Future<void> load(String path);
 
-  /// Czytelna liczba chunków w bazie (w tym bez embeddingów)
+  /// Total number of chunks in the store (including those without embeddings)
   int get size;
 
-  /// Liczba chunków z wygenerowanym embeddingiem (dostępnych do wyszukiwania)
+  /// Number of chunks with a generated embedding (available for search)
   int get indexedSize;
 
-  /// Unikalne identyfikatory dokumentów w bazie
+  /// Unique document identifiers in the store
   List<String> get documentIds;
 }
 
-/// Utility: obliczenia podobieństwa wektorowego.
+/// Utility: vector similarity computations.
 ///
-/// Używa właściwego wzoru kosinusowego (nie zakłada normalizacji wektorów),
-/// co działa poprawnie nawet jeśli embeddingi nie są znormalizowane L2.
+/// Uses the proper cosine formula (does not assume normalised vectors),
+/// which works correctly even if embeddings are not L2-normalised.
 abstract final class VectorSimilarity {
-  /// Podobieństwo kosinusowe między wektorami [a] i [b].
+  /// Cosine similarity between vectors [a] and [b].
   ///
-  /// Zwraca wartość w przedziale [-1.0, 1.0]:
-  /// - 1.0 = identyczne kierunki (idealny match)
-  /// - 0.0 = prostopadłe (brak związku)
-  /// - -1.0 = przeciwne kierunki
+  /// Returns a value in the range [-1.0, 1.0]:
+  /// - 1.0 = identical directions (perfect match)
+  /// - 0.0 = orthogonal (no relation)
+  /// - -1.0 = opposite directions
   ///
-  /// Zwraca 0.0 jeśli jeden z wektorów jest zerowy lub wymiarowości nie pasują.
+  /// Returns 0.0 if either vector is zero or the dimensions do not match.
   static double cosine(List<double> a, List<double> b) {
     if (a.length != b.length || a.isEmpty) return 0.0;
 
@@ -101,9 +101,9 @@ abstract final class VectorSimilarity {
     return denom == 0.0 ? 0.0 : dot / denom;
   }
 
-  /// Odległość euklidesowa między wektorami [a] i [b].
+  /// Euclidean distance between vectors [a] and [b].
   ///
-  /// Mniejsza wartość = bardziej podobne. Alternatywa dla cosine similarity.
+  /// Smaller value = more similar. Alternative to cosine similarity.
   static double euclidean(List<double> a, List<double> b) {
     if (a.length != b.length || a.isEmpty) return double.infinity;
     double sum = 0.0;

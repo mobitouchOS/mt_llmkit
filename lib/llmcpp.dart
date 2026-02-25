@@ -1,6 +1,6 @@
 // lib/llmcpp.dart
 
-// ── Zewnętrzne formaty promptów (z llama_cpp_dart) ──────────────────────────
+// ── External prompt formats (from llama_cpp_dart) ───────────────────────────
 export 'package:llama_cpp_dart/llama_cpp_dart.dart'
     show PromptFormat, ChatMLFormat, AlpacaFormat, GemmaFormat;
 
@@ -14,14 +14,14 @@ export 'src/core/streaming_result.dart';
 // ── Domain (abstrakcje) ───────────────────────────────────────────────────────
 export 'src/domain/providers/llm_provider.dart';
 
-// ── Data (implementacje providerów) ──────────────────────────────────────────
+// ── Data (provider implementations) ─────────────────────────────────────────
 export 'src/data/providers/local_gguf_provider.dart';
 export 'src/data/providers/openai_provider.dart';
 
-// ── Presentation (główna klasa pluginu) ──────────────────────────────────────
+// ── Presentation (main plugin class) ─────────────────────────────────────────
 export 'src/presentation/llm_plugin.dart';
 
-// ── Formaty promptów ──────────────────────────────────────────────────────────
+// ── Prompt formats ────────────────────────────────────────────────────────────
 export 'src/formats/harmony_format.dart';
 export 'src/formats/prompt_format.dart';
 
@@ -36,7 +36,7 @@ export 'src/rag/vector_store/in_memory_vector_store.dart';
 export 'src/rag/rag_pipeline.dart';
 export 'src/rag/llama_rag_coordinator.dart';
 
-// ── Legacy (zachowanie wstecznej kompatybilności) ─────────────────────────────
+// ── Legacy (backwards compatibility) ─────────────────────────────────────────
 export 'src/models/llm_model_base.dart';
 export 'src/models/llm_model_isolated.dart';
 export 'src/models/llm_model_standard.dart';

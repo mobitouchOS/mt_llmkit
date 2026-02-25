@@ -29,7 +29,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// ── Nawigacja główna ────────────────────────────────────────────────────────
+// ── Main navigation ──────────────────────────────────────────────────────────
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -68,7 +68,7 @@ class _MainPageState extends State<MainPage> {
   }
 }
 
-// ── Strona LLM (bez zmian, wydzielona do osobnej klasy) ────────────────────
+// ── LLM page (extracted to a separate class) ─────────────────────────────────
 
 enum ProviderType { localGGUF, openAI }
 
@@ -96,7 +96,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
   String _statusMessage = '';
 
   final _promptController = TextEditingController(
-    text: 'Jaka jest stolica Polski? Opisz ją w 2 zdaniach.',
+    text: 'What is the capital of Poland? Describe it in 2 sentences.',
   );
   final _apiKeyController = TextEditingController();
   final _scrollController = ScrollController();
@@ -127,7 +127,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
       setState(() {
         _modelPath = file.path;
         _isModelReady = true;
-        _statusMessage = 'Model gotowy: Llama-3.2-1B-Instruct Q4_K_M';
+        _statusMessage = 'Model ready: Llama-3.2-1B-Instruct Q4_K_M';
       });
     }
   }
@@ -136,7 +136,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0;
-      _statusMessage = 'Pobieranie modelu...';
+      _statusMessage = 'Downloading model...';
     });
 
     try {
@@ -158,7 +158,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
           if (contentLength > 0) {
             setState(() {
               _downloadProgress = downloadedBytes / contentLength;
-              _statusMessage = 'Pobieranie: ${(_downloadProgress * 100).toStringAsFixed(1)}%';
+              _statusMessage = 'Downloading: ${(_downloadProgress * 100).toStringAsFixed(1)}%';
             });
           }
         }
@@ -168,7 +168,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
           _modelPath = filePath;
           _isModelReady = true;
           _isDownloading = false;
-          _statusMessage = 'Model pobrany pomyślnie';
+          _statusMessage = 'Model downloaded successfully';
         });
       } else {
         throw HttpException('HTTP ${response.statusCode}');
@@ -178,7 +178,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
         _isDownloading = false;
         _statusMessage = '';
       });
-      _showError('Błąd pobierania: $e');
+      _showError('Download error: $e');
     }
   }
 
@@ -203,7 +203,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
       _plugin = null;
       return false;
     } catch (e) {
-      _showError('Błąd inicjalizacji: $e');
+      _showError('Initialization error: $e');
       _plugin = null;
       return false;
     }
@@ -215,7 +215,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
       _isGenerating = true;
       _output = '';
       _metricsText = '';
-      _statusMessage = 'Inicjalizowanie...';
+      _statusMessage = 'Initializing...';
       _outputBuffer.clear();
     });
 
@@ -227,7 +227,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
       }
     }
 
-    setState(() => _statusMessage = 'Generowanie...');
+    setState(() => _statusMessage = 'Generating...');
 
     _streamSubscription = _plugin!.sendPromptStream(_promptController.text).listen(
       (chunk) {
@@ -238,19 +238,19 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
           }
           if (chunk.metrics != null) {
             final m = chunk.metrics!;
-            _metricsText = 'Tokeny: ${m.tokensGenerated} │ ${m.tokensPerSecond.toStringAsFixed(1)} t/s │ ${m.msPerToken.toStringAsFixed(0)} ms/token';
+            _metricsText = 'Tokens: ${m.tokensGenerated} │ ${m.tokensPerSecond.toStringAsFixed(1)} t/s │ ${m.msPerToken.toStringAsFixed(0)} ms/token';
           }
           if (chunk.isFinal) {
             _isGenerating = false;
-            _statusMessage = 'Gotowe';
+            _statusMessage = 'Done';
           }
         });
       },
       onError: (Object error) {
         setState(() {
-          _output = 'Błąd: $error';
+          _output = 'Error: $error';
           _isGenerating = false;
-          _statusMessage = 'Błąd';
+          _statusMessage = 'Error';
         });
       },
       onDone: () {
@@ -274,8 +274,8 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           child: SegmentedButton<ProviderType>(
             segments: const [
-              ButtonSegment(value: ProviderType.localGGUF, label: Text('Lokalny GGUF'), icon: Icon(Icons.computer)),
-              ButtonSegment(value: ProviderType.openAI, label: Text('OpenAI (szkielet)'), icon: Icon(Icons.cloud_outlined)),
+              ButtonSegment(value: ProviderType.localGGUF, label: Text('Local GGUF'), icon: Icon(Icons.computer)),
+              ButtonSegment(value: ProviderType.openAI, label: Text('OpenAI (skeleton)'), icon: Icon(Icons.cloud_outlined)),
             ],
             selected: {_selectedProvider},
             onSelectionChanged: (selected) {
@@ -319,7 +319,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
                 if (_output.isNotEmpty)
                   SelectableText(_output, style: Theme.of(context).textTheme.bodyLarge)
                 else if (!_isGenerating && _isModelReady)
-                  Text('Naciśnij ▶ aby wygenerować...', style: TextStyle(color: Colors.grey.shade400)),
+                  Text('Press ▶ to generate...', style: TextStyle(color: Colors.grey.shade400)),
                 if (_isGenerating)
                   const Padding(
                     padding: EdgeInsets.only(top: 12),
@@ -366,7 +366,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Pobieranie: ${(_downloadProgress * 100).toStringAsFixed(1)}%', style: const TextStyle(fontSize: 13)),
+            Text('Downloading: ${(_downloadProgress * 100).toStringAsFixed(1)}%', style: const TextStyle(fontSize: 13)),
             const SizedBox(height: 6),
             LinearProgressIndicator(value: _downloadProgress),
           ],
@@ -375,7 +375,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
     }
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: ElevatedButton.icon(onPressed: _downloadModel, icon: const Icon(Icons.download), label: const Text('Pobierz model GGUF (~800MB)')),
+      child: ElevatedButton.icon(onPressed: _downloadModel, icon: const Icon(Icons.download), label: const Text('Download GGUF model (~800MB)')),
     );
   }
 
@@ -390,7 +390,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
             decoration: const InputDecoration(labelText: 'OpenAI API Key', hintText: 'sk-...', prefixIcon: Icon(Icons.key), border: OutlineInputBorder()),
           ),
           const SizedBox(height: 6),
-          const Text('Szkielet — metody rzucają UnimplementedError.', style: TextStyle(fontSize: 11, color: Colors.orange)),
+          const Text('Skeleton — methods throw UnimplementedError.', style: TextStyle(fontSize: 11, color: Colors.orange)),
         ],
       ),
     );

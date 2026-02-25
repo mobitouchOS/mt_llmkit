@@ -1,12 +1,12 @@
 // example/lib/rag_page.dart
 //
-// Demonstracja pełnego pipeline'u RAG:
+// Full RAG pipeline demonstration:
 //
 //  ┌─────────────────────────────────────────────────────────────────────┐
-//  │  1. Modele: model generowania + model embeddingów (osobne GGUF)     │
-//  │  2. Dokumenty: PDF/TXT → ekstrakcja tekstu → TextChunker → chunks   │
-//  │  3. Ingestia: chunks → LlamaEmbeddingProvider → InMemoryVectorStore  │
-//  │  4. Zapytanie: query → embed → search → augment prompt → stream      │
+//  │  1. Models: generation model + embedding model (separate GGUF)      │
+//  │  2. Documents: PDF/TXT → text extraction → TextChunker → chunks     │
+//  │  3. Ingestion: chunks → LlamaEmbeddingProvider → InMemoryVectorStore │
+//  │  4. Query: query → embed → search → augment prompt → stream         │
 //  └─────────────────────────────────────────────────────────────────────┘
 
 import 'dart:async';
@@ -18,7 +18,7 @@ import 'package:llmcpp/llmcpp.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
 
-// ── Modele downloadów ──────────────────────────────────────────────────────
+// ── Model download specs ───────────────────────────────────────────────────
 
 class _ModelSpec {
   final String name;
@@ -39,7 +39,7 @@ const _generationModel = _ModelSpec(
   url:
       'https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
   filename: 'model.gguf',
-  description: 'Model generowania (~800MB)',
+  description: 'Generation model (~800MB)',
 );
 
 const _embeddingModel = _ModelSpec(
@@ -47,10 +47,10 @@ const _embeddingModel = _ModelSpec(
   url:
       'https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf',
   filename: 'embed_model.gguf',
-  description: 'Model embeddingów (~270MB)',
+  description: 'Embedding model (~270MB)',
 );
 
-// ── Widok dokumentu w liście ───────────────────────────────────────────────
+// ── Document list item ────────────────────────────────────────────────────
 
 class _IndexedDoc {
   final Document document;
@@ -58,7 +58,7 @@ class _IndexedDoc {
   _IndexedDoc(this.document, this.chunkCount);
 }
 
-// ── Strona RAG ─────────────────────────────────────────────────────────────
+// ── RAG page ──────────────────────────────────────────────────────────────
 
 class RagPage extends StatefulWidget {
   const RagPage({super.key});
@@ -68,7 +68,7 @@ class RagPage extends StatefulWidget {
 }
 
 class _RagPageState extends State<RagPage> {
-  // ── State: modele ──────────────────────────────────────────────────────
+  // ── State: models ──────────────────────────────────────────────────────
   String? _generationModelPath;
   String? _embeddingModelPath;
   bool _generationModelReady = false;
@@ -83,19 +83,19 @@ class _RagPageState extends State<RagPage> {
   RagPipeline? _pipeline;
   bool _pipelineReady = false;
 
-  // ── State: dokumenty ───────────────────────────────────────────────────
+  // ── State: documents ───────────────────────────────────────────────────
   final List<_IndexedDoc> _indexedDocs = [];
   bool _isIngesting = false;
   RagIngestionProgress? _ingestionProgress;
 
-  // ── State: zapytanie ───────────────────────────────────────────────────
+  // ── State: query ───────────────────────────────────────────────────────
   bool _isQuerying = false;
   String _answer = '';
   List<VectorSearchResult> _sources = [];
   String _metricsText = '';
   StreamSubscription<StreamingChunk>? _querySubscription;
 
-  // ── Kontrolery ─────────────────────────────────────────────────────────
+  // ── Controllers ────────────────────────────────────────────────────────
   final _queryController = TextEditingController();
   final _scrollController = ScrollController();
 
@@ -115,7 +115,7 @@ class _RagPageState extends State<RagPage> {
     super.dispose();
   }
 
-  // ── Sprawdzenie istniejących modeli ────────────────────────────────────
+  // ── Check for existing models ──────────────────────────────────────────
 
   Future<void> _checkExistingModels() async {
     final dir = await getApplicationDocumentsDirectory();
@@ -133,7 +133,7 @@ class _RagPageState extends State<RagPage> {
       }
     });
 
-    // Wczytaj wcześniej zapisany indeks jeśli oba modele gotowe
+    // Load previously saved index if both models are ready
     if (_generationModelReady && _embeddingModelReady) {
       await _tryLoadSavedIndex();
     }
@@ -143,14 +143,14 @@ class _RagPageState extends State<RagPage> {
     final dir = await getApplicationDocumentsDirectory();
     final indexPath = '${dir.path}/rag_index.json';
     if (File(indexPath).existsSync()) {
-      // Indeks zostanie załadowany przy initializacji pipeline
+      // The index will be loaded during pipeline initialization
       _showSnack(
-        'Znaleziono zapisany indeks — zostanie wczytany po zainicjowaniu.',
+        'Saved index found — it will be loaded on initialization.',
       );
     }
   }
 
-  // ── Pobieranie modeli ──────────────────────────────────────────────────
+  // ── Model downloads ────────────────────────────────────────────────────
 
   Future<void> _downloadModel(_ModelSpec spec) async {
     final isGen = spec == _generationModel;
@@ -214,18 +214,18 @@ class _RagPageState extends State<RagPage> {
           _isDownloadingEmbed = false;
         }
       });
-      _showError('Błąd pobierania ${spec.name}: $e');
+      _showError('Download error for ${spec.name}: $e');
     }
   }
 
-  // ── Inicjalizacja pipeline ─────────────────────────────────────────────
+  // ── Pipeline initialization ────────────────────────────────────────────
 
-  /// Inicjalizuje RagPipeline przez [LlamaRagCoordinator].
+  /// Initializes RagPipeline via [LlamaRagCoordinator].
   ///
-  /// Koordynator ładuje oba modele (embeddingi + generowanie) w JEDNYM
-  /// worker isolate — eliminuje crash "Cannot invoke native callback from a
-  /// different isolate" spowodowany przez wyścig `llama_log_set` w dwóch
-  /// izolowanych kontekstach.
+  /// The coordinator loads both models (embeddings + generation) in a SINGLE
+  /// worker isolate — eliminating the "Cannot invoke native callback from a
+  /// different isolate" crash caused by the `llama_log_set` race between
+  /// two isolated contexts.
   Future<void> _initializePipeline() async {
     if (!_generationModelReady || !_embeddingModelReady) return;
 
@@ -233,25 +233,25 @@ class _RagPageState extends State<RagPage> {
       final dir = await getApplicationDocumentsDirectory();
       final indexPath = '${dir.path}/rag_index.json';
 
-      // Jeden izolat zarządza oboma modelami — brak wyścigu log callback
+      // One isolate manages both models — no log callback race
       final coordinator = await LlamaRagCoordinator.create(
         embedModelPath: _embeddingModelPath!,
         genModelPath: _generationModelPath!,
         genConfig: const LlmConfig(
-          temp: 0.2,
+          temp: 0.3,
           topP: 0.85,
           topK: 30,
-          nBatch: 512,
+          nBatch: 1024,
           penaltyRepeat: 1.15,
           nCtx: 4096,
           nGpuLayers: 4,
           nThreads: 4,
-          nPredict: 384,
+          nPredict: 512,
         ),
-        embedNCtx: 1024,
+        embedNCtx: 512,
       );
 
-      // VectorStore z auto-save i wczytaniem wcześniejszego indeksu
+      // VectorStore with auto-save and loading of the previous index
       final vectorStore = InMemoryVectorStore(autoSavePath: indexPath);
       await vectorStore.load(indexPath);
 
@@ -259,7 +259,7 @@ class _RagPageState extends State<RagPage> {
         embeddingProvider: coordinator.embeddingProvider,
         vectorStore: vectorStore,
         generationPlugin: coordinator.generationPlugin,
-        chunker: const TextChunker(chunkSize: 400, chunkOverlap: 80),
+        chunker: const TextChunker(chunkSize: 600, chunkOverlap: 100),
       );
 
       setState(() {
@@ -269,23 +269,22 @@ class _RagPageState extends State<RagPage> {
       });
 
       if (vectorStore.size > 0) {
-        _showSnack('Wczytano indeks: ${vectorStore.indexedSize} chunków');
+        _showSnack('Index loaded: ${vectorStore.indexedSize} chunks');
       }
     } catch (e) {
-      _showError('Błąd inicjalizacji pipeline: $e');
+      _showError('Pipeline initialization error: $e');
     }
   }
 
-  // ── Dodawanie dokumentu ────────────────────────────────────────────────
+  // ── Document ingestion ─────────────────────────────────────────────────
 
   Future<void> _pickAndIngestFile() async {
-    print('picking');
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'txt'],
       allowMultiple: false,
     );
-    print('picked: $result');
+
     if (result == null || result.files.isEmpty) return;
 
     final file = result.files.first;
@@ -300,12 +299,12 @@ class _RagPageState extends State<RagPage> {
           ? await _extractPdfText(path)
           : await File(path).readAsString();
     } catch (e) {
-      _showError('Błąd odczytu pliku: $e');
+      _showError('File read error: $e');
       return;
     }
 
     if (content.trim().isEmpty) {
-      _showError('Plik jest pusty lub nie można wyekstrahować tekstu.');
+      _showError('File is empty or text cannot be extracted.');
       return;
     }
 
@@ -316,32 +315,24 @@ class _RagPageState extends State<RagPage> {
     await _ingestDocument(document);
   }
 
-  /// Ekstrakcja tekstu z PDF przy użyciu syncfusion_flutter_pdf.
+  /// PDF text extraction using read_pdf_text.
   Future<String> _extractPdfText(String pdfPath) async {
-    // final bytes = await File(pdfPath).readAsBytes();
-    // final pdfDocument = PdfDocument(inputBytes: bytes);
-    // final extractor = PdfTextExtractor(pdfDocument);
     final text = await ReadPdfText.getPDFtextPaginated(pdfPath);
 
     final buffer = StringBuffer();
     for (int i = 0; i < text.length; i++) {
-      // final pageText = extractor.extractText(
-      //   startPageIndex: i,
-      //   endPageIndex: i,
-      // );
       if (text[i].isNotEmpty) {
         buffer.writeln(text[i]);
       }
     }
 
-    // text.dispose();
     return buffer.toString();
   }
 
-  /// Ingestion dokumentu: chunk → embed → store.
+  /// Document ingestion: chunk → embed → store.
   ///
-  /// Stream [RagPipeline.ingestDocument] informuje o postępie po każdym
-  /// zaembeddowanym chunku — aktualizujemy UI w czasie rzeczywistym.
+  /// The [RagPipeline.ingestDocument] stream reports progress after each
+  /// embedded chunk — we update the UI in real time.
   Future<void> _ingestDocument(Document document) async {
     if (_pipeline == null) return;
 
@@ -365,22 +356,22 @@ class _RagPageState extends State<RagPage> {
         _ingestionProgress = null;
       });
 
-      _showSnack('Zaindeksowano "${document.title}" ($chunkCount chunków)');
+      _showSnack('Indexed "${document.title}" ($chunkCount chunks)');
     } catch (e) {
       setState(() => _isIngesting = false);
-      _showError('Błąd ingestii: $e');
+      _showError('Ingestion error: $e');
     }
   }
 
   Future<void> _removeDocument(_IndexedDoc doc) async {
     await _pipeline!.vectorStore.removeDocument(doc.document.id);
     setState(() => _indexedDocs.remove(doc));
-    _showSnack('Usunięto "${doc.document.title}" z indeksu');
+    _showSnack('Removed "${doc.document.title}" from the index');
   }
 
-  // ── Zapytanie RAG ──────────────────────────────────────────────────────
+  // ── RAG query ──────────────────────────────────────────────────────────
 
-  /// Odpytuje pipeline RAG i wyświetla streaming odpowiedzi z sourcami.
+  /// Queries the RAG pipeline and displays the streaming response with sources.
   ///
   /// Flow:
   /// 1. embed(query) → queryEmbedding
@@ -401,7 +392,7 @@ class _RagPageState extends State<RagPage> {
     });
 
     try {
-      // Pobierz relevantne chunki (do wyświetlenia jako źródła)
+      // Retrieve relevant chunks (for display as sources)
       _sources = await _pipeline!.findRelevant(
         question,
         topK: 4,
@@ -409,7 +400,7 @@ class _RagPageState extends State<RagPage> {
       );
       setState(() {});
 
-      // Streaming odpowiedzi z RAG
+      // Streaming RAG response
       final answerBuffer = StringBuffer();
       _querySubscription = _pipeline!
           .query(question, topK: 4, minSimilarity: 0.25)
@@ -423,7 +414,7 @@ class _RagPageState extends State<RagPage> {
                 if (chunk.metrics != null) {
                   final m = chunk.metrics!;
                   _metricsText =
-                      '${m.tokensGenerated} tokenów │ '
+                      '${m.tokensGenerated} tokens │ '
                       '${m.tokensPerSecond.toStringAsFixed(1)} t/s │ '
                       '${(m.durationMs / 1000).toStringAsFixed(1)}s';
                 }
@@ -444,7 +435,7 @@ class _RagPageState extends State<RagPage> {
             },
             onError: (Object error) {
               setState(() {
-                _answer = 'Błąd: $error';
+                _answer = 'Error: $error';
                 _isQuerying = false;
               });
             },
@@ -454,7 +445,7 @@ class _RagPageState extends State<RagPage> {
           );
     } catch (e) {
       setState(() {
-        _answer = 'Błąd: $e';
+        _answer = 'Error: $e';
         _isQuerying = false;
       });
     }
@@ -490,8 +481,8 @@ class _RagPageState extends State<RagPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Sekcja: Modele ──────────────────────────────────────────
-            _SectionHeader(title: '1. Modele', icon: Icons.memory),
+            // ── Section: Models ─────────────────────────────────────────
+            _SectionHeader(title: '1. Models', icon: Icons.memory),
             _buildModelRow(
               _generationModel,
               _generationModelReady,
@@ -513,20 +504,20 @@ class _RagPageState extends State<RagPage> {
               ElevatedButton.icon(
                 onPressed: _initializePipeline,
                 icon: const Icon(Icons.play_arrow),
-                label: const Text('Inicjalizuj Pipeline RAG'),
+                label: const Text('Initialize RAG Pipeline'),
               ),
 
             if (_pipelineReady)
-              const _StatusChip(label: 'Pipeline gotowy', color: Colors.green),
+              const _StatusChip(label: 'Pipeline ready', color: Colors.green),
 
             const SizedBox(height: 20),
 
-            // ── Sekcja: Dokumenty ───────────────────────────────────────
-            _SectionHeader(title: '2. Baza Wiedzy', icon: Icons.folder_open),
+            // ── Section: Documents ──────────────────────────────────────
+            _SectionHeader(title: '2. Knowledge Base', icon: Icons.folder_open),
 
             if (!_pipelineReady)
               const Text(
-                'Najpierw zainicjalizuj pipeline.',
+                'Initialize the pipeline first.',
                 style: TextStyle(color: Colors.grey),
               ),
 
@@ -534,16 +525,16 @@ class _RagPageState extends State<RagPage> {
               ElevatedButton.icon(
                 onPressed: _isIngesting ? null : _pickAndIngestFile,
                 icon: const Icon(Icons.attach_file),
-                label: const Text('Dodaj plik (PDF / TXT)'),
+                label: const Text('Add file (PDF / TXT)'),
               ),
 
-              // Progress bar ingestii
+              // Ingestion progress bar
               if (_isIngesting && _ingestionProgress != null) ...[
                 const SizedBox(height: 12),
                 _IngestionProgressBar(progress: _ingestionProgress!),
               ],
 
-              // Lista zaindeksowanych dokumentów
+              // List of indexed documents
               if (_indexedDocs.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 ...List.generate(_indexedDocs.length, (i) {
@@ -558,8 +549,8 @@ class _RagPageState extends State<RagPage> {
 
             const SizedBox(height: 20),
 
-            // ── Sekcja: Zapytanie RAG ────────────────────────────────────
-            _SectionHeader(title: '3. Zapytaj', icon: Icons.question_answer),
+            // ── Section: RAG Query ───────────────────────────────────────
+            _SectionHeader(title: '3. Ask', icon: Icons.question_answer),
 
             if (_pipelineReady && _pipeline!.vectorStore.indexedSize > 0) ...[
               Row(
@@ -570,7 +561,7 @@ class _RagPageState extends State<RagPage> {
                       maxLines: 2,
                       minLines: 1,
                       decoration: const InputDecoration(
-                        hintText: 'Wpisz pytanie do dokumentów...',
+                        hintText: 'Type a question about the documents...',
                         border: OutlineInputBorder(),
                       ),
                       onSubmitted: (_) => _sendQuery(),
@@ -581,19 +572,19 @@ class _RagPageState extends State<RagPage> {
                     IconButton(
                       icon: const Icon(Icons.stop_circle),
                       onPressed: _stopQuery,
-                      tooltip: 'Zatrzymaj',
+                      tooltip: 'Stop',
                     )
                   else
                     IconButton.filled(
                       icon: const Icon(Icons.send),
                       onPressed: _sendQuery,
-                      tooltip: 'Wyślij zapytanie',
+                      tooltip: 'Send query',
                     ),
                 ],
               ),
               const SizedBox(height: 12),
 
-              // Metryki
+              // Metrics
               if (_metricsText.isNotEmpty)
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -620,7 +611,7 @@ class _RagPageState extends State<RagPage> {
                   ),
                 ),
 
-              // Odpowiedź
+              // Answer
               if (_answer.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Container(
@@ -639,7 +630,7 @@ class _RagPageState extends State<RagPage> {
                           const Icon(Icons.smart_toy, size: 16),
                           const SizedBox(width: 6),
                           const Text(
-                            'Odpowiedź',
+                            'Answer',
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                           if (_isQuerying) ...[
@@ -662,11 +653,11 @@ class _RagPageState extends State<RagPage> {
                 ),
               ],
 
-              // Źródła (relevantne chunki)
+              // Sources (relevant chunks)
               if (_sources.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 const Text(
-                  'Źródła (relevantne fragmenty):',
+                  'Sources (relevant excerpts):',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
                 const SizedBox(height: 6),
@@ -674,7 +665,7 @@ class _RagPageState extends State<RagPage> {
               ],
             ] else if (_pipelineReady) ...[
               const Text(
-                'Dodaj dokumenty do bazy wiedzy, żeby móc zadawać pytania.',
+                'Add documents to the knowledge base to be able to ask questions.',
                 style: TextStyle(color: Colors.grey),
               ),
             ],
@@ -710,7 +701,7 @@ class _RagPageState extends State<RagPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Pobieranie ${spec.name}: ${(progress * 100).toStringAsFixed(1)}%',
+            'Downloading ${spec.name}: ${(progress * 100).toStringAsFixed(1)}%',
             style: const TextStyle(fontSize: 13),
           ),
           const SizedBox(height: 4),
@@ -721,12 +712,12 @@ class _RagPageState extends State<RagPage> {
     return TextButton.icon(
       onPressed: () => _downloadModel(spec),
       icon: const Icon(Icons.download, size: 18),
-      label: Text('Pobierz ${spec.name}'),
+      label: Text('Download ${spec.name}'),
     );
   }
 }
 
-// ── Pomocnicze widgety ─────────────────────────────────────────────────────
+// ── Helper widgets ─────────────────────────────────────────────────────────
 
 class _SectionHeader extends StatelessWidget {
   final String title;
@@ -789,13 +780,13 @@ class _DocumentTile extends StatelessWidget {
         ),
         title: Text(doc.document.title, style: const TextStyle(fontSize: 13)),
         subtitle: Text(
-          '${doc.chunkCount} chunków • ${doc.document.contentLength} znaków',
+          '${doc.chunkCount} chunks • ${doc.document.contentLength} chars',
           style: const TextStyle(fontSize: 11),
         ),
         trailing: IconButton(
           icon: const Icon(Icons.delete_outline, size: 20),
           onPressed: onRemove,
-          tooltip: 'Usuń z indeksu',
+          tooltip: 'Remove from index',
         ),
       ),
     );
@@ -812,7 +803,7 @@ class _IngestionProgressBar extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Embedding ${progress.embeddedChunks}/${progress.totalChunks} chunków...',
+          'Embedding ${progress.embeddedChunks}/${progress.totalChunks} chunks...',
           style: const TextStyle(fontSize: 12),
         ),
         const SizedBox(height: 4),
@@ -858,12 +849,14 @@ class _SourceChip extends StatelessWidget {
             children: [
               Icon(Icons.format_quote, size: 14, color: Colors.green.shade700),
               const SizedBox(width: 4),
-              Text(
-                '#${result.rank} • $title • $pct% zbieżność',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green.shade700,
+              Flexible(
+                child: Text(
+                  '#${result.rank} • $title • $pct% match',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green.shade700,
+                  ),
                 ),
               ),
             ],

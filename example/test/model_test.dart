@@ -1,4 +1,4 @@
-// Testy dla funkcjonalności modelu LLM w aplikacji example
+// Tests for LLM model functionality in the example app
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llmcpp/llmcpp.dart';
 

@@ -2,26 +2,26 @@
 
 import 'dart:convert';
 
-/// Reprezentuje zaindeksowany dokument w bazie wiedzy RAG.
+/// Represents an indexed document in the RAG knowledge base.
 ///
-/// Dokument to surowy tekst wyekstrahowany z pliku (PDF, TXT itp.)
-/// wraz z metadanymi. Przed użyciem w RAG musi zostać podzielony
-/// na chunki ([TextChunker]) i osadzony ([EmbeddingProvider]).
+/// A document is raw text extracted from a file (PDF, TXT, etc.)
+/// together with metadata. Before use in RAG it must be split
+/// into chunks ([TextChunker]) and embedded ([EmbeddingProvider]).
 class Document {
-  /// Unikalny identyfikator dokumentu (generowany na podstawie source + timestamp)
+  /// Unique document identifier (generated from source + timestamp)
   final String id;
 
-  /// Ścieżka do pliku źródłowego lub etykieta (np. "manual", "url:...")
+  /// Path to the source file or a label (e.g. "manual", "url:...")
   final String source;
 
-  /// Pełna treść tekstowa dokumentu
+  /// Full text content of the document
   final String content;
 
-  /// Metadane dokumentu
-  /// Typowe klucze: 'title', 'type' ('pdf'/'txt'), 'pages', 'sizeBytes', 'author'
+  /// Document metadata.
+  /// Typical keys: 'title', 'type' ('pdf'/'txt'), 'pages', 'sizeBytes', 'author'
   final Map<String, dynamic> metadata;
 
-  /// Data dodania dokumentu do bazy
+  /// Date the document was added to the store
   final DateTime createdAt;
 
   Document({
@@ -35,7 +35,7 @@ class Document {
 
   // ── Factory constructors ─────────────────────────────────────────────────
 
-  /// Tworzy dokument z pliku tekstowego.
+  /// Creates a document from a text file.
   factory Document.fromText(
     String content, {
     required String source,
@@ -55,11 +55,11 @@ class Document {
     );
   }
 
-  /// Tworzy dokument z wyekstrahowanego tekstu PDF.
+  /// Creates a document from extracted PDF text.
   ///
-  /// [source] — ścieżka do pliku PDF
-  /// [content] — tekst wyekstrahowany przez parser PDF (np. syncfusion_flutter_pdf)
-  /// [pageCount] — liczba stron w PDF
+  /// [source] — path to the PDF file
+  /// [content] — text extracted by a PDF parser (e.g. syncfusion_flutter_pdf)
+  /// [pageCount] — number of pages in the PDF
   factory Document.fromPdf(
     String content, {
     required String source,
@@ -81,18 +81,18 @@ class Document {
     );
   }
 
-  // ── Gettery pomocnicze ──────────────────────────────────────────────────
+  // ── Helper getters ───────────────────────────────────────────────────────
 
-  /// Liczba znaków w treści
+  /// Number of characters in the content
   int get contentLength => content.length;
 
-  /// Szacowana liczba słów
+  /// Estimated word count
   int get wordCount => content.split(RegExp(r'\s+')).length;
 
-  /// Typ dokumentu ('pdf', 'txt', lub 'unknown')
+  /// Document type ('pdf', 'txt', or 'unknown')
   String get type => metadata['type'] as String? ?? 'unknown';
 
-  /// Tytuł dokumentu (nazwa pliku lub z metadanych)
+  /// Document title (filename or from metadata)
   String get title => metadata['title'] as String? ?? source;
 
   // ── Serialization ────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ class Document {
   String toString() =>
       'Document(id: $id, title: $title, chars: $contentLength)';
 
-  // ── Prywatne helpery ─────────────────────────────────────────────────────
+  // ── Private helpers ──────────────────────────────────────────────────────
 
   static String _generateId(String source) {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
@@ -126,10 +126,10 @@ class Document {
   }
 
   static String _filenameFromPath(String path) {
-    if (path.isEmpty) return 'Dokument';
+    if (path.isEmpty) return 'Document';
     final parts = path.replaceAll('\\', '/').split('/');
     final filename = parts.last;
-    // Usuń rozszerzenie
+    // Strip extension
     final dotIndex = filename.lastIndexOf('.');
     return dotIndex > 0 ? filename.substring(0, dotIndex) : filename;
   }
