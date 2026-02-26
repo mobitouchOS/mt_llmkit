@@ -25,7 +25,7 @@ class LlmModelIsolated extends LlmModelBase {
 
     final loadCommand = LlamaLoad(
       path: localPath,
-      verbose: true,
+      verbose: false,
       modelParams: ModelParams()
         ..nGpuLayers = config.nGpuLayersDefault
         ..mainGpu = -1,
