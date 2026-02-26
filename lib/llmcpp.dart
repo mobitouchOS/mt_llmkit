@@ -4,9 +4,18 @@
 export 'package:llama_cpp_dart/llama_cpp_dart.dart'
     show PromptFormat, ChatMLFormat, AlpacaFormat, GemmaFormat;
 
-// ── REST API providers ────────────────────────────────────────────────────────
+// ── REST API providers (prompt-based) ────────────────────────────────────────
 export 'src/api/openai_provider.dart';
 export 'src/api/rest_api_provider.dart';
+// ── AI Chat providers (conversation-based) ───────────────────────────────────
+export 'src/api/ai_chat_provider.dart';
+export 'src/api/ai_chat_provider_factory.dart';
+export 'src/api/chat_exceptions.dart';
+export 'src/api/chat_models.dart';
+export 'src/api/claude_chat_provider.dart';
+export 'src/api/gemini_chat_provider.dart';
+export 'src/api/mistral_chat_provider.dart';
+export 'src/api/openai_chat_provider.dart';
 // ── Core ─────────────────────────────────────────────────────────────────────
 export 'src/core/generation_result.dart';
 export 'src/core/llm_config.dart';

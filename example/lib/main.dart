@@ -8,6 +8,7 @@ import 'package:llmcpp/llmcpp.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'rag_page.dart';
+import 'rest_api_tab.dart';
 
 void main() {
   runApp(const MyApp());
@@ -77,7 +78,7 @@ class _MainPageState extends State<MainPage> {
 
 // ── LLM page ──────────────────────────────────────────────────────────────────
 
-enum ProviderType { localGGUF, openAI }
+enum ProviderType { localGGUF, restApi }
 
 class LlmDemoPage extends StatefulWidget {
   const LlmDemoPage({super.key});
@@ -88,7 +89,6 @@ class LlmDemoPage extends StatefulWidget {
 
 class _LlmDemoPageState extends State<LlmDemoPage> {
   GgufPlugin? _ggufPlugin;
-  OpenAIProvider? _openAIProvider;
   StreamSubscription<StreamingChunk>? _streamSubscription;
 
   ProviderType _selectedProvider = ProviderType.localGGUF;
@@ -106,7 +106,6 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
   final _promptController = TextEditingController(
     text: 'What is the capital of Poland? Describe it in 2 sentences.',
   );
-  final _apiKeyController = TextEditingController();
   final _scrollController = ScrollController();
 
   static const _modelUrl =
@@ -123,7 +122,6 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
     _streamSubscription?.cancel();
     _ggufPlugin?.dispose();
     _promptController.dispose();
-    _apiKeyController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -216,12 +214,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
       _outputBuffer.clear();
     });
 
-    switch (_selectedProvider) {
-      case ProviderType.localGGUF:
-        await _sendGgufPrompt();
-      case ProviderType.openAI:
-        await _sendOpenAIPrompt();
-    }
+    await _sendGgufPrompt();
   }
 
   Future<void> _sendGgufPrompt() async {
@@ -273,22 +266,6 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
         );
   }
 
-  Future<void> _sendOpenAIPrompt() async {
-    try {
-      _openAIProvider ??= OpenAIProvider();
-      await _openAIProvider!.initialize({
-        'apiKey': _apiKeyController.text,
-        'model': 'gpt-4o-mini',
-      });
-    } on UnimplementedError catch (e) {
-      _showError('${e.message}');
-      setState(() => _isGenerating = false);
-    } catch (e) {
-      _showError('OpenAI error: $e');
-      setState(() => _isGenerating = false);
-    }
-  }
-
   void _showError(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -300,6 +277,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
   Widget build(BuildContext context) {
     return Column(
       children: [
+        // ── Provider selector ─────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           child: SegmentedButton<ProviderType>(
@@ -310,8 +288,8 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
                 icon: Icon(Icons.computer),
               ),
               ButtonSegment(
-                value: ProviderType.openAI,
-                label: Text('OpenAI (skeleton)'),
+                value: ProviderType.restApi,
+                label: Text('Rest API'),
                 icon: Icon(Icons.cloud_outlined),
               ),
             ],
@@ -325,78 +303,85 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
             },
           ),
         ),
-        if (_selectedProvider == ProviderType.localGGUF)
-          _buildLocalGGUFSection()
-        else
-          _buildOpenAISection(),
-        const Divider(height: 1),
-        if (_isModelReady || _selectedProvider == ProviderType.openAI)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: TextField(
-              controller: _promptController,
-              maxLines: 3,
-              minLines: 1,
-              decoration: const InputDecoration(
-                labelText: 'Prompt',
-                border: OutlineInputBorder(),
+
+        // ── Rest API tab — fully self-contained ───────────────────────────────
+        if (_selectedProvider == ProviderType.restApi)
+          const Expanded(child: RestApiTab())
+
+        // ── Local GGUF tab ────────────────────────────────────────────────────
+        else ...[
+          _buildLocalGGUFSection(),
+          const Divider(height: 1),
+          if (_isModelReady)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: TextField(
+                controller: _promptController,
+                maxLines: 3,
+                minLines: 1,
+                decoration: const InputDecoration(
+                  labelText: 'Prompt',
+                  border: OutlineInputBorder(),
+                ),
               ),
             ),
-          ),
-        if (_metricsText.isNotEmpty)
-          Container(
-            color: Colors.blue.shade50,
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-            child: Text(
-              _metricsText,
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.blue.shade700,
-                fontFamily: 'monospace',
+          if (_metricsText.isNotEmpty)
+            Container(
+              color: Colors.blue.shade50,
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Text(
+                _metricsText,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.blue.shade700,
+                  fontFamily: 'monospace',
+                ),
               ),
             ),
-          ),
-        Expanded(
-          child: SingleChildScrollView(
-            controller: _scrollController,
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (_output.isNotEmpty)
-                  SelectableText(
-                    _output,
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  )
-                else if (!_isGenerating && _isModelReady)
-                  Text(
-                    'Press ▶ to generate...',
-                    style: TextStyle(color: Colors.grey.shade400),
-                  ),
-                if (_isGenerating)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 12),
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+          Expanded(
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_output.isNotEmpty)
+                    SelectableText(
+                      _output,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    )
+                  else if (!_isGenerating && _isModelReady)
+                    Text(
+                      'Press ▶ to generate...',
+                      style: TextStyle(color: Colors.grey.shade400),
                     ),
-                  ),
-              ],
+                  if (_isGenerating)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 12),
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
-        ),
-        if (_statusMessage.isNotEmpty)
-          Container(
-            color: Colors.grey.shade100,
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Text(
-              _statusMessage,
-              style: const TextStyle(fontSize: 11, color: Colors.black54),
+          if (_statusMessage.isNotEmpty)
+            Container(
+              color: Colors.grey.shade100,
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(
+                _statusMessage,
+                style: const TextStyle(fontSize: 11, color: Colors.black54),
+              ),
             ),
-          ),
+        ],
       ],
     );
   }
@@ -451,31 +436,6 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
         onPressed: _downloadModel,
         icon: const Icon(Icons.download),
         label: const Text('Download GGUF model (~800MB)'),
-      ),
-    );
-  }
-
-  Widget _buildOpenAISection() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: Column(
-        children: [
-          TextField(
-            controller: _apiKeyController,
-            obscureText: true,
-            decoration: const InputDecoration(
-              labelText: 'OpenAI API Key',
-              hintText: 'sk-...',
-              prefixIcon: Icon(Icons.key),
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Skeleton — methods throw UnimplementedError.',
-            style: TextStyle(fontSize: 11, color: Colors.orange),
-          ),
-        ],
       ),
     );
   }
