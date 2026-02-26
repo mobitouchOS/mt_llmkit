@@ -6,7 +6,6 @@ import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 import '../../llmcpp.dart';
 import '../native/library_loader.dart';
-import '../utils/llm_utils.dart';
 
 class LlmModelIsolated extends LlmModelBase {
   final LlmConfig config;
@@ -121,8 +120,7 @@ class LlmModelIsolated extends LlmModelBase {
     markGenerationStart();
     try {
       await for (final chunk in _promptTokenStream(formattedPrompt)) {
-        final tokensInChunk = LlmUtils.estimateTokenCount(chunk);
-        totalTokenCount += tokensInChunk;
+        totalTokenCount += 1;
 
         yield StreamingChunk(
           text: chunk,

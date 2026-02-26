@@ -1,39 +1,30 @@
+import 'package:llama_cpp_dart/llama_cpp_dart.dart';
+
 abstract class LlmUtils {
-  /// Estimates token count in a text chunk
-  /// This is an approximation - real tokenization depends on the model
-  static int estimateTokenCount(String text) {
+  /// Counts tokens using the model's real BPE tokenizer when a [Llama]
+  /// instance is available, or falls back to a word + punctuation heuristic
+  /// when [llama] is null (e.g. in the isolate backend or RAG coordinator
+  /// where direct vocabulary access is not possible).
+  ///
+  /// Pass [addBos] = false (default) when counting individual streaming chunks
+  /// so that the BOS token is not included in every chunk's count.
+  static int tokenizerEstimateTokens(String text, Llama? llama,
+      {bool addBos = false}) {
     if (text.isEmpty) return 0;
 
-    // Simple heuristic: count words and punctuation
-    // Most LLMs use approximately 1 token per word + separate tokens for punctuation
-
-    // Count words (sequences of letters/numbers)
-    final wordMatches = RegExp(r'\w+').allMatches(text);
-    final wordCount = wordMatches.length;
-
-    // Count significant punctuation marks (each is usually a separate token)
-    final punctuationMarks = [
-      ',',
-      '.',
-      '!',
-      '?',
-      ';',
-      ':',
-      '"',
-      "'",
-      '(',
-      ')',
-      '[',
-      ']',
-      '{',
-      '}',
-    ];
-    var punctuationCount = 0;
-    for (final mark in punctuationMarks) {
-      punctuationCount += mark.allMatches(text).length;
+    if (llama != null) {
+      return llama.tokenize(text, addBos).length;
     }
 
-    // Return total estimated tokens
+    // Fallback heuristic: word + punctuation counting.
+    // Used when the tokenizer is unavailable (LlamaParent / LlmInterface).
+    final wordCount = RegExp(r'\w+').allMatches(text).length;
+    var punctuationCount = 0;
+    for (final mark in const [
+      ',', '.', '!', '?', ';', ':', '"', "'", '(', ')', '[', ']', '{', '}',
+    ]) {
+      punctuationCount += mark.allMatches(text).length;
+    }
     return wordCount + punctuationCount;
   }
 }

@@ -26,7 +26,6 @@ import '../core/llm_interface.dart';
 import '../core/performance_metrics.dart';
 import '../core/streaming_result.dart';
 import '../native/library_loader.dart';
-import '../utils/llm_utils.dart';
 import 'embeddings/embedding_provider.dart';
 
 // ── Worker isolate ────────────────────────────────────────────────────────────
@@ -294,7 +293,7 @@ class _CoordPlugin implements LlmInterface {
     int totalTokenCount = 0;
 
     await for (final token in sendPrompt(prompt)) {
-      totalTokenCount += LlmUtils.estimateTokenCount(token);
+      totalTokenCount += 1;
 
       yield StreamingChunk(
         text: token,

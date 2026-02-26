@@ -6,7 +6,6 @@ import 'package:llama_cpp_dart/llama_cpp_dart.dart';
 
 import '../../llmcpp.dart';
 import '../native/library_loader.dart';
-import '../utils/llm_utils.dart';
 
 class LlmModelStandard extends LlmModelBase {
   final LlmConfig config;
@@ -116,8 +115,7 @@ class LlmModelStandard extends LlmModelBase {
     markGenerationStart();
     try {
       await for (final chunk in _llama!.generateText()) {
-        final tokensInChunk = LlmUtils.estimateTokenCount(chunk);
-        totalTokenCount += tokensInChunk;
+        totalTokenCount += 1;
 
         final metrics = PerformanceMetrics.fromGeneration(
           tokenCount: totalTokenCount,
