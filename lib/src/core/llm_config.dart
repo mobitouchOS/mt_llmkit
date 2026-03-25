@@ -133,6 +133,6 @@ class LlmConfig {
   List<String> get preservedTokensDefault => preservedTokens ?? const [];
   String get grammarRootDefault => grammarRoot ?? 'root';
   bool get reusePromptPrefixDefault => reusePromptPrefix ?? true;
-  int get streamBatchTokenThresholdDefault => streamBatchTokenThreshold ?? 8;
+  int get streamBatchTokenThresholdDefault => streamBatchTokenThreshold ?? 1;
   int get streamBatchByteThresholdDefault => streamBatchByteThreshold ?? 512;
 }

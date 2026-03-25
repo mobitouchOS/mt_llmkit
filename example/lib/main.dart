@@ -204,7 +204,14 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
     try {
       _ggufPlugin = LocalModel(
         backend: ModelBackend.inProcess,
-        config: const LlmConfig(),
+        config: LlmConfig(
+          // topP: 0.1,
+          temp: 0.7,
+          nPredict: 120,
+          // nBatch: 128,
+          nThreads: 6,
+          // nCtx: 1024,
+        ),
       );
       await _ggufPlugin!.loadModel(_modelPath!);
       return true;
