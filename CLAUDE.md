@@ -66,7 +66,7 @@ Set via `LlmConfig.promptFormat`. Built-in: `ChatMLFormat()`, `AlpacaFormat()`, 
 
 ### Performance Metrics
 
-`PerformanceMetrics` tracks `tokensGenerated`, `durationMs`, `tokensPerSecond`, `msPerToken`. Token counting is **estimated** (word + punctuation based, ~75–90% accuracy) via `LlmUtils.tokenizerEstimateTokens()` in `lib/src/utils/llm_utils.dart`.
+`PerformanceMetrics` tracks `tokensGenerated`, `durationMs`, `tokensPerSecond`, `msPerToken`. Token counting is exact: each callback from llama.cpp emits one token, counted via `+= 1` in the streaming loop.
 
 ### Native Libraries
 
