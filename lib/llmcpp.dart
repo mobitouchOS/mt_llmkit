@@ -2,7 +2,13 @@
 
 // ── llamadart re-exports ──────────────────────────────────────────────────────
 export 'package:llamadart/llamadart.dart'
-    show LlamaImageContent, LlamaTextContent, LlamaContentPart, GpuBackend;
+    show
+        LlamaImageContent,
+        LlamaTextContent,
+        LlamaContentPart,
+        GpuBackend,
+        LoraAdapterConfig,
+        GenerationGrammarTrigger;
 
 // ── AI Chat providers (conversation-based) ───────────────────────────────────
 export 'src/api/ai_chat_provider.dart';

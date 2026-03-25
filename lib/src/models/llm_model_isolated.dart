@@ -19,11 +19,49 @@ Future<void> _llamaIsolateWorkerMain(Map<String, dynamic> args) async {
   final int gpuLayers = args['gpuLayers'] as int;
   final int batchSize = args['batchSize'] as int;
   final int numberOfThreads = args['numberOfThreads'] as int;
+  final int numberOfThreadsBatch = args['numberOfThreadsBatch'] as int;
+  final int microBatchSize = args['microBatchSize'] as int;
+  final int maxParallelSequences = args['maxParallelSequences'] as int;
+  final String? chatTemplate = args['chatTemplate'] as String?;
+  final List<LoraAdapterConfig> loras =
+      (args['loras'] as List)
+          .cast<Map>()
+          .map(
+            (m) => LoraAdapterConfig(
+              path: m['path'] as String,
+              scale: (m['scale'] as num).toDouble(),
+            ),
+          )
+          .toList();
   final int maxTokens = args['maxTokens'] as int;
   final double temp = (args['temp'] as num).toDouble();
   final int topK = args['topK'] as int;
   final double topP = (args['topP'] as num).toDouble();
+  final double minP = (args['minP'] as num).toDouble();
   final double penalty = (args['penalty'] as num).toDouble();
+  final int? seed = args['seed'] as int?;
+  final List<String> stopSequences =
+      (args['stopSequences'] as List).cast<String>();
+  final String? grammar = args['grammar'] as String?;
+  final bool grammarLazy = args['grammarLazy'] as bool;
+  final List<GenerationGrammarTrigger> grammarTriggers =
+      (args['grammarTriggers'] as List)
+          .cast<Map>()
+          .map(
+            (m) => GenerationGrammarTrigger(
+              type: m['type'] as int,
+              value: m['value'] as String,
+              token: m['token'] as int?,
+            ),
+          )
+          .toList();
+  final List<String> preservedTokens =
+      (args['preservedTokens'] as List).cast<String>();
+  final String grammarRoot = args['grammarRoot'] as String;
+  final bool reusePromptPrefix = args['reusePromptPrefix'] as bool;
+  final int streamBatchTokenThreshold =
+      args['streamBatchTokenThreshold'] as int;
+  final int streamBatchByteThreshold = args['streamBatchByteThreshold'] as int;
   final String gpuBackendName = args['gpuBackend'] as String;
   final GpuBackend gpuBackend = GpuBackend.values.firstWhere(
     (e) => e.name == gpuBackendName,
@@ -40,6 +78,11 @@ Future<void> _llamaIsolateWorkerMain(Map<String, dynamic> args) async {
         gpuLayers: gpuLayers,
         batchSize: batchSize,
         numberOfThreads: numberOfThreads,
+        numberOfThreadsBatch: numberOfThreadsBatch,
+        microBatchSize: microBatchSize,
+        maxParallelSequences: maxParallelSequences,
+        loras: loras,
+        chatTemplate: chatTemplate,
         preferredBackend: gpuBackend,
       ),
     );
@@ -56,7 +99,18 @@ Future<void> _llamaIsolateWorkerMain(Map<String, dynamic> args) async {
     temp: temp,
     topK: topK,
     topP: topP,
+    minP: minP,
     penalty: penalty,
+    seed: seed,
+    stopSequences: stopSequences,
+    grammar: grammar,
+    grammarLazy: grammarLazy,
+    grammarTriggers: grammarTriggers,
+    preservedTokens: preservedTokens,
+    grammarRoot: grammarRoot,
+    reusePromptPrefix: reusePromptPrefix,
+    streamBatchTokenThreshold: streamBatchTokenThreshold,
+    streamBatchByteThreshold: streamBatchByteThreshold,
   );
 
   final receivePort = ReceivePort();
@@ -138,11 +192,35 @@ class LlmModelIsolated extends LlmModelBase {
         'gpuLayers': config.nGpuLayersDefault,
         'batchSize': config.nBatchDefault,
         'numberOfThreads': config.nThreadsDefault,
+        'numberOfThreadsBatch': config.numberOfThreadsBatchDefault,
+        'microBatchSize': config.microBatchSizeDefault,
+        'maxParallelSequences': config.maxParallelSequencesDefault,
+        'chatTemplate': config.chatTemplate,
+        'loras': config.lorasDefault
+            .map((l) => {'path': l.path, 'scale': l.scale})
+            .toList(),
         'maxTokens': config.nPredictDefault,
         'temp': config.tempDefault,
         'topK': config.topKDefault,
         'topP': config.topPDefault,
+        'minP': config.minPDefault,
         'penalty': config.penaltyRepeatDefault,
+        'seed': config.seed,
+        'stopSequences': config.stopSequencesDefault,
+        'grammar': config.grammar,
+        'grammarLazy': config.grammarLazyDefault,
+        'grammarTriggers': config.grammarTriggersDefault
+            .map((t) => {
+                  'type': t.type,
+                  'value': t.value,
+                  if (t.token != null) 'token': t.token,
+                })
+            .toList(),
+        'preservedTokens': config.preservedTokensDefault,
+        'grammarRoot': config.grammarRootDefault,
+        'reusePromptPrefix': config.reusePromptPrefixDefault,
+        'streamBatchTokenThreshold': config.streamBatchTokenThresholdDefault,
+        'streamBatchByteThreshold': config.streamBatchByteThresholdDefault,
         'gpuBackend': config.gpuBackendDefault.name,
         'sendPort': initPort.sendPort,
       },

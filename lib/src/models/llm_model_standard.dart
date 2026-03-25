@@ -20,6 +20,11 @@ class LlmModelStandard extends LlmModelBase {
     gpuLayers: config.nGpuLayersDefault,
     batchSize: config.nBatchDefault,
     numberOfThreads: config.nThreadsDefault,
+    numberOfThreadsBatch: config.numberOfThreadsBatchDefault,
+    microBatchSize: config.microBatchSizeDefault,
+    maxParallelSequences: config.maxParallelSequencesDefault,
+    loras: config.lorasDefault,
+    chatTemplate: config.chatTemplate,
     preferredBackend: config.gpuBackendDefault,
   );
 
@@ -28,7 +33,18 @@ class LlmModelStandard extends LlmModelBase {
     temp: config.tempDefault,
     topK: config.topKDefault,
     topP: config.topPDefault,
+    minP: config.minPDefault,
     penalty: config.penaltyRepeatDefault,
+    seed: config.seed,
+    stopSequences: config.stopSequencesDefault,
+    grammar: config.grammar,
+    grammarLazy: config.grammarLazyDefault,
+    grammarTriggers: config.grammarTriggersDefault,
+    preservedTokens: config.preservedTokensDefault,
+    grammarRoot: config.grammarRootDefault,
+    reusePromptPrefix: config.reusePromptPrefixDefault,
+    streamBatchTokenThreshold: config.streamBatchTokenThresholdDefault,
+    streamBatchByteThreshold: config.streamBatchByteThresholdDefault,
   );
 
   LlamaChatMessage _buildMessage(String prompt, List<LlamaImageContent>? images) {
