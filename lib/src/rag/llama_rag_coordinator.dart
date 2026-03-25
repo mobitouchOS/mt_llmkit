@@ -1,117 +1,102 @@
 // lib/src/rag/llama_rag_coordinator.dart
 //
-// ARCHITECTURE — why a single isolate?
+// ARCHITECTURE — single isolate for both models
 //
-// llama.cpp stores ONE global log callback pointer (set by `llama_log_set`).
-// Dart creates isolate-local `Pointer.fromFunction<>()` for FFI callbacks —
-// invoking such a callback from a different isolate causes a
-// FATAL CRASH: "Cannot invoke native callback from a different isolate."
-//
-// When two isolates (LlamaEmbeddingWorker + LlamaChild from LlamaParent) each
-// call LibraryLoader.initialize() → llama_log_set(own_isolate_callback),
-// the last one wins the race. A llama_decode call by the "loser" crashes
-// the app because it tries to invoke a callback from a foreign isolate.
-//
-// Solution: ONE isolate manages both models. A single call to
-// LibraryLoader.initialize() → one log callback registration → no race.
+// llamadart resolves the NativeCallable isolate-crash issue internally.
+// We still use one isolate for both models to:
+// 1. Keep the UI thread free during inference
+// 2. Avoid any residual resource contention between two LlamaEngine instances
 
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 
-import 'package:llama_cpp_dart/llama_cpp_dart.dart';
+import 'package:llamadart/llamadart.dart';
 
 import '../core/llm_config.dart';
 import '../core/llm_interface.dart';
 import '../core/performance_metrics.dart';
 import '../core/streaming_result.dart';
-import '../native/library_loader.dart';
 import 'embeddings/embedding_provider.dart';
 
 // ── Worker isolate ────────────────────────────────────────────────────────────
 
-/// Entry point for the worker isolate — manages both the embedding and generation models.
-///
-/// Key point: [LibraryLoader.initialize()] and both [Llama] constructors are
-/// called INSIDE this isolate, so `Pointer.fromFunction<>()` (log callback)
-/// is bound to this very isolate. No isolate conflict.
-void _llamaRagWorkerMain(Map<String, dynamic> args) {
+Future<void> _llamaRagWorkerMain(Map<String, dynamic> args) async {
   final String embedModelPath = args['embedModelPath'] as String;
   final String genModelPath = args['genModelPath'] as String;
-  final int embedNCtx = args['embedNCtx'] as int;
-  final int genNCtx = args['genNCtx'] as int;
-  final int nGpuLayers = args['nGpuLayers'] as int;
-  final int nBatch = args['nBatch'] as int;
-  final int nThreads = args['nThreads'] as int;
+  final int embedContextSize = args['embedContextSize'] as int;
+  final int genContextSize = args['genContextSize'] as int;
+  final int batchSize = args['batchSize'] as int;
+  final int numberOfThreads = args['numberOfThreads'] as int;
+  final int maxTokens = args['maxTokens'] as int;
   final double temp = (args['temp'] as num).toDouble();
-  final int nPredict = args['nPredict'] as int;
   final int topK = args['topK'] as int;
   final double topP = (args['topP'] as num).toDouble();
-  final double penaltyRepeat = (args['penaltyRepeat'] as num).toDouble();
+  final double penalty = (args['penalty'] as num).toDouble();
+  final String gpuBackendName = args['gpuBackend'] as String;
+  final GpuBackend genGpuBackend = GpuBackend.values.firstWhere(
+    (e) => e.name == gpuBackendName,
+    orElse: () => GpuBackend.auto,
+  );
   final SendPort mainPort = args['sendPort'] as SendPort;
 
-  // CRITICAL: single call in this isolate — one log callback.
-  LibraryLoader.initialize();
-
-  Llama? embedModel;
-  Llama? genModel;
-
+  final embedEngine = LlamaEngine(LlamaBackend());
   try {
-    embedModel = Llama(
+    await embedEngine.loadModel(
       embedModelPath,
-      modelParams: ModelParams()
-        ..nGpuLayers = nGpuLayers
-        ..mainGpu = -1,
-      contextParams: ContextParams()
-        ..embeddings = true
-        ..poolingType = LlamaPoolingType.mean
-        ..nCtx = embedNCtx
-        ..nBatch = nBatch
-        ..nThreads = nThreads,
-      samplerParams: SamplerParams(),
+      modelParams: ModelParams(
+        contextSize: embedContextSize,
+        gpuLayers: 0,
+        batchSize: batchSize,
+        numberOfThreads: numberOfThreads,
+        preferredBackend: GpuBackend.cpu,
+      ),
     );
   } catch (e) {
     mainPort.send({'type': 'error', 'phase': 'embed_init', 'message': '$e'});
     return;
   }
 
+  final genEngine = LlamaEngine(LlamaBackend());
   try {
-    genModel = Llama(
+    await genEngine.loadModel(
       genModelPath,
-      modelParams: ModelParams()
-        ..nGpuLayers = nGpuLayers
-        ..mainGpu = -1,
-      contextParams: ContextParams()
-        ..nCtx = genNCtx
-        ..nBatch = nBatch
-        ..nThreads = nThreads
-        ..nPredict = nPredict,
-      samplerParams: SamplerParams()
-        ..temp = temp
-        ..topK = topK
-        ..topP = topP
-        ..penaltyRepeat = penaltyRepeat,
+      modelParams: ModelParams(
+        contextSize: genContextSize,
+        gpuLayers: 0,
+        batchSize: batchSize,
+        numberOfThreads: numberOfThreads,
+        preferredBackend: genGpuBackend,
+      ),
     );
   } catch (e) {
-    embedModel.dispose();
+    await embedEngine.dispose();
     mainPort.send({'type': 'error', 'phase': 'gen_init', 'message': '$e'});
     return;
   }
 
+  final genParams = GenerationParams(
+    maxTokens: maxTokens,
+    temp: temp,
+    topK: topK,
+    topP: topP,
+    penalty: penalty,
+  );
+
   final receivePort = ReceivePort();
   mainPort.send({'type': 'ready', 'port': receivePort.sendPort});
 
-  StreamSubscription<String>? genSubscription;
+  StreamSubscription<LlamaCompletionChunk>? genSubscription;
 
-  receivePort.listen((dynamic message) {
-    if (message is! Map<String, dynamic>) return;
+  await for (final message in receivePort) {
+    if (message is! Map<String, dynamic>) continue;
 
     switch (message['type'] as String?) {
       case 'embed':
         final text = message['text'] as String;
         final replyPort = message['replyPort'] as SendPort;
         try {
-          final embedding = embedModel!.getEmbeddings(text);
+          final embedding = await embedEngine.embed(text);
           replyPort.send({'type': 'ok', 'embedding': embedding});
         } catch (e) {
           replyPort.send({'type': 'error', 'message': '$e'});
@@ -120,35 +105,39 @@ void _llamaRagWorkerMain(Map<String, dynamic> args) {
       case 'generate':
         final prompt = message['prompt'] as String;
         final streamPort = message['streamPort'] as SendPort;
-        try {
-          genModel!.setPrompt(prompt);
-          genSubscription = genModel.generateText().listen(
-            (token) => streamPort.send({'type': 'token', 'text': token}),
-            onDone: () {
-              streamPort.send({'type': 'done'});
-              genSubscription = null;
-            },
-            onError: (Object e) {
-              streamPort.send({'type': 'error', 'message': '$e'});
-              genSubscription = null;
-            },
-          );
-        } catch (e) {
-          streamPort.send({'type': 'error', 'message': '$e'});
-        }
+        genSubscription = genEngine
+            .create(
+              [LlamaChatMessage.fromText(role: LlamaChatRole.user, text: prompt)],
+              params: genParams,
+            )
+            .listen(
+              (chunk) {
+                final text = chunk.choices.firstOrNull?.delta.content;
+                if (text != null) streamPort.send({'type': 'token', 'text': text});
+              },
+              onDone: () {
+                streamPort.send({'type': 'done'});
+                genSubscription = null;
+              },
+              onError: (Object e) {
+                streamPort.send({'type': 'error', 'message': '$e'});
+                genSubscription = null;
+              },
+            );
 
       case 'stop_generate':
         genSubscription?.cancel();
         genSubscription = null;
-        genModel?.clear();
+        genEngine.cancelGeneration();
 
       case 'dispose':
         genSubscription?.cancel();
-        embedModel?.dispose();
-        genModel?.dispose();
+        await embedEngine.dispose();
+        await genEngine.dispose();
         receivePort.close();
+        return;
     }
-  });
+  }
 }
 
 // ── Private provider implementations ─────────────────────────────────────────
@@ -163,7 +152,7 @@ class _CoordEmbeddingProvider implements EmbeddingProvider {
 
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
-    _isInitialized = true; // model already loaded in the coordinator
+    _isInitialized = true;
   }
 
   @override
@@ -207,16 +196,10 @@ class _CoordEmbeddingProvider implements EmbeddingProvider {
     if (text.length <= maxChars) return text;
     final truncated = text.substring(0, maxChars);
     final lastSpace = truncated.lastIndexOf(' ');
-    return lastSpace > maxChars * 0.8
-        ? truncated.substring(0, lastSpace)
-        : truncated;
+    return lastSpace > maxChars * 0.8 ? truncated.substring(0, lastSpace) : truncated;
   }
 }
 
-/// Generation plugin backed by the RAG worker isolate.
-///
-/// Implements [LlmInterface] so it can be used wherever a generation plugin
-/// is expected (e.g. [RagPipeline.generationPlugin]).
 class _CoordPlugin implements LlmInterface {
   final SendPort _workerPort;
   bool _isGenerating = false;
@@ -224,15 +207,13 @@ class _CoordPlugin implements LlmInterface {
   _CoordPlugin(this._workerPort);
 
   @override
-  bool get isInitialized => true; // model is loaded by the coordinator
+  bool get isInitialized => true;
 
   @override
   bool get isGenerating => _isGenerating;
 
   @override
-  Future<void> loadModel(String localPath) async {
-    // Model is loaded by LlamaRagCoordinator — no-op here.
-  }
+  Future<void> loadModel(String localPath) async {}
 
   @override
   Stream<String> sendPrompt(String prompt) {
@@ -250,9 +231,7 @@ class _CoordPlugin implements LlmInterface {
       if (message is! Map<String, dynamic>) return;
       switch (message['type'] as String?) {
         case 'token':
-          if (!controller.isClosed) {
-            controller.add(message['text'] as String);
-          }
+          if (!controller.isClosed) controller.add(message['text'] as String);
         case 'done':
           replyPort.close();
           _isGenerating = false;
@@ -261,9 +240,7 @@ class _CoordPlugin implements LlmInterface {
           replyPort.close();
           _isGenerating = false;
           if (!controller.isClosed) {
-            controller.addError(
-              Exception('Generation error: ${message['message']}'),
-            );
+            controller.addError(Exception('Generation error: ${message['message']}'));
           }
       }
     });
@@ -294,7 +271,6 @@ class _CoordPlugin implements LlmInterface {
 
     await for (final token in sendPrompt(prompt)) {
       totalTokenCount += 1;
-
       yield StreamingChunk(
         text: token,
         metrics: PerformanceMetrics.fromGeneration(
@@ -318,52 +294,35 @@ class _CoordPlugin implements LlmInterface {
   }
 
   @override
-  void dispose() {
-    // Coordinator handles isolate lifecycle — no-op here.
+  void dispose() {}
+
+  @override
+  void clean() {}
+
+  @override
+  Stream<String> sendPromptWithImages(String prompt, List<LlamaImageContent> images) {
+    throw UnsupportedError('Vision is not supported in the RAG pipeline.');
   }
 
   @override
-  void clean() {
-    // No context-reset API exposed by the worker — no-op.
+  Future<String> sendPromptCompleteWithImages(
+    String prompt,
+    List<LlamaImageContent> images,
+  ) {
+    throw UnsupportedError('Vision is not supported in the RAG pipeline.');
+  }
+
+  @override
+  Stream<StreamingChunk> sendPromptStreamWithImages(
+    String prompt,
+    List<LlamaImageContent> images,
+  ) {
+    throw UnsupportedError('Vision is not supported in the RAG pipeline.');
   }
 }
 
 // ── LlamaRagCoordinator ───────────────────────────────────────────────────────
 
-/// Coordinator managing a single worker isolate for both llama.cpp models.
-///
-/// ## Problem
-///
-/// `llama.cpp` stores a single global log callback. Dart creates
-/// isolate-local `Pointer.fromFunction<>()` for FFI callbacks. When two
-/// isolates (embedding + generation) concurrently call `llama_log_set`,
-/// a llama_decode call in one of them tries to invoke the callback from the
-/// other isolate → fatal crash: "Cannot invoke native callback from a different
-/// isolate."
-///
-/// ## Solution
-///
-/// One isolate ([_llamaRagWorkerMain]) loads both models — the embedding model
-/// (with `embeddings=true`) and the generation model. A single call to
-/// [LibraryLoader.initialize()] → one log callback registration → no race.
-///
-/// ## Usage
-///
-/// ```dart
-/// final coordinator = await LlamaRagCoordinator.create(
-///   embedModelPath: '/path/to/nomic-embed.gguf',
-///   genModelPath: '/path/to/llama.gguf',
-///   genConfig: LlmConfig(temp: 0.3, nCtx: 4096, nGpuLayers: 4),
-/// );
-///
-/// final pipeline = RagPipeline(
-///   embeddingProvider: coordinator.embeddingProvider,
-///   vectorStore: InMemoryVectorStore(),
-///   generationPlugin: coordinator.generationPlugin,
-/// );
-///
-/// await coordinator.dispose();
-/// ```
 class LlamaRagCoordinator {
   Isolate? _isolate;
   SendPort? _workerPort;
@@ -372,15 +331,6 @@ class LlamaRagCoordinator {
 
   LlamaRagCoordinator._();
 
-  /// Creates the coordinator and loads both models in a single worker isolate.
-  ///
-  /// [embedModelPath] — path to the .gguf embeddings model file
-  /// [genModelPath]   — path to the .gguf generation model file
-  /// [genConfig]      — generation model configuration
-  /// [embedNCtx]      — embeddings context size (default 512)
-  ///
-  /// Throws [FileSystemException] if either file does not exist.
-  /// Throws [Exception] if model loading fails.
   static Future<LlamaRagCoordinator> create({
     required String embedModelPath,
     required String genModelPath,
@@ -388,16 +338,10 @@ class LlamaRagCoordinator {
     int embedNCtx = 512,
   }) async {
     if (!File(embedModelPath).existsSync()) {
-      throw FileSystemException(
-        'Embedding model does not exist',
-        embedModelPath,
-      );
+      throw FileSystemException('Embedding model does not exist', embedModelPath);
     }
     if (!File(genModelPath).existsSync()) {
-      throw FileSystemException(
-        'Generation model does not exist',
-        genModelPath,
-      );
+      throw FileSystemException('Generation model does not exist', genModelPath);
     }
 
     final coordinator = LlamaRagCoordinator._();
@@ -418,16 +362,16 @@ class LlamaRagCoordinator {
       {
         'embedModelPath': embedModelPath,
         'genModelPath': genModelPath,
-        'embedNCtx': embedNCtx,
-        'genNCtx': genConfig.nCtxDefault,
-        'nGpuLayers': genConfig.nGpuLayersDefault,
-        'nBatch': genConfig.nBatchDefault,
-        'nThreads': genConfig.nThreadsDefault,
+        'embedContextSize': embedNCtx,
+        'genContextSize': genConfig.nCtxDefault,
+        'batchSize': genConfig.nBatchDefault,
+        'numberOfThreads': genConfig.nThreadsDefault,
+        'maxTokens': genConfig.nPredictDefault,
         'temp': genConfig.tempDefault,
-        'nPredict': genConfig.nPredictDefault,
         'topK': genConfig.topKDefault,
         'topP': genConfig.topPDefault,
-        'penaltyRepeat': genConfig.penaltyRepeatDefault,
+        'penalty': genConfig.penaltyRepeatDefault,
+        'gpuBackend': genConfig.gpuBackendDefault.name,
         'sendPort': initPort.sendPort,
       },
       debugName: 'llmcpp_RagWorker',
@@ -440,35 +384,23 @@ class LlamaRagCoordinator {
       _isolate?.kill();
       _isolate = null;
       throw Exception(
-        'LlamaRagCoordinator init failed '
-        '(${initMsg['phase']}): ${initMsg['message']}',
+        'LlamaRagCoordinator init failed (${initMsg['phase']}): ${initMsg['message']}',
       );
     }
 
     _workerPort = initMsg['port'] as SendPort;
 
-    // Probe embedding dimensions via a test embed
     final tempProvider = _CoordEmbeddingProvider(_workerPort!, dimensions: 0);
     final probeVec = await tempProvider.embed('dim_probe');
 
-    _embeddingProvider = _CoordEmbeddingProvider(
-      _workerPort!,
-      dimensions: probeVec.length,
-    );
-
+    _embeddingProvider = _CoordEmbeddingProvider(_workerPort!, dimensions: probeVec.length);
     _generationPlugin = _CoordPlugin(_workerPort!);
   }
 
-  /// Embedding provider — communicates with the worker isolate.
   EmbeddingProvider get embeddingProvider => _embeddingProvider;
-
-  /// Generation plugin — communicates with the worker isolate.
   LlmInterface get generationPlugin => _generationPlugin;
-
-  /// Whether the coordinator is ready for use.
   bool get isReady => _workerPort != null;
 
-  /// Releases both models and terminates the worker isolate.
   Future<void> dispose() async {
     _workerPort?.send({'type': 'dispose'});
     await Future.delayed(const Duration(milliseconds: 200));

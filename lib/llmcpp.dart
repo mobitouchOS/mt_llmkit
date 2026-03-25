@@ -1,8 +1,8 @@
 // lib/llmcpp.dart
 
-// ── External prompt formats (from llama_cpp_dart) ───────────────────────────
-export 'package:llama_cpp_dart/llama_cpp_dart.dart'
-    show PromptFormat, ChatMLFormat, AlpacaFormat, GemmaFormat;
+// ── llamadart re-exports ──────────────────────────────────────────────────────
+export 'package:llamadart/llamadart.dart'
+    show LlamaImageContent, LlamaTextContent, LlamaContentPart, GpuBackend;
 
 // ── REST API providers (prompt-based) ────────────────────────────────────────
 export 'src/api/openai_provider.dart';
@@ -22,9 +22,6 @@ export 'src/core/llm_config.dart';
 export 'src/core/llm_interface.dart';
 export 'src/core/performance_metrics.dart';
 export 'src/core/streaming_result.dart';
-// ── Prompt formats ────────────────────────────────────────────────────────────
-export 'src/formats/harmony_format.dart';
-export 'src/formats/prompt_format.dart';
 // ── GGUF (local model plugin) ─────────────────────────────────────────────────
 export 'src/gguf/gguf_plugin.dart';
 // ── Models (low-level, for advanced use) ─────────────────────────────────────

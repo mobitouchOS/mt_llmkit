@@ -45,14 +45,14 @@ void main() {
       expect(model2.isDisposed, true);
     });
 
-    test('should work with different prompt formats', () {
+    test('should work with different configs', () {
       final models = [
-        LlmModelStandard(LlmConfig(promptFormat: ChatMLFormat())),
-        LlmModelStandard(LlmConfig(promptFormat: AlpacaFormat())),
-        LlmModelStandard(LlmConfig(promptFormat: GemmaFormat())),
-        LlmModelIsolated(LlmConfig(promptFormat: ChatMLFormat())),
-        LlmModelIsolated(LlmConfig(promptFormat: AlpacaFormat())),
-        LlmModelIsolated(LlmConfig(promptFormat: GemmaFormat())),
+        LlmModelStandard(const LlmConfig()),
+        LlmModelStandard(const LlmConfig(nGpuLayers: 0, temp: 0.5)),
+        LlmModelStandard(const LlmConfig(nCtx: 4096, topP: 0.8)),
+        LlmModelIsolated(const LlmConfig()),
+        LlmModelIsolated(const LlmConfig(nGpuLayers: 0, temp: 0.5)),
+        LlmModelIsolated(const LlmConfig(nCtx: 4096, topP: 0.8)),
       ];
 
       for (final model in models) {

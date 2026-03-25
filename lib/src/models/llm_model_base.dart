@@ -1,7 +1,9 @@
 // lib/src/models/llm_model_base.dart
 import 'package:flutter/foundation.dart';
+import 'package:llamadart/llamadart.dart' show LlamaImageContent;
 
 import '../core/llm_interface.dart';
+import '../core/streaming_result.dart';
 
 abstract class LlmModelBase implements LlmInterface {
   bool _isInitialized = false;
@@ -52,5 +54,32 @@ abstract class LlmModelBase implements LlmInterface {
     if (_isDisposed) {
       throw StateError('Model has been disposed.');
     }
+  }
+
+  @override
+  Stream<String> sendPromptWithImages(String prompt, List<LlamaImageContent> images) {
+    throw UnsupportedError(
+      'Vision not supported. Set mmprojPath in LlmConfig to enable it.',
+    );
+  }
+
+  @override
+  Future<String> sendPromptCompleteWithImages(
+    String prompt,
+    List<LlamaImageContent> images,
+  ) {
+    throw UnsupportedError(
+      'Vision not supported. Set mmprojPath in LlmConfig to enable it.',
+    );
+  }
+
+  @override
+  Stream<StreamingChunk> sendPromptStreamWithImages(
+    String prompt,
+    List<LlamaImageContent> images,
+  ) {
+    throw UnsupportedError(
+      'Vision not supported. Set mmprojPath in LlmConfig to enable it.',
+    );
   }
 }

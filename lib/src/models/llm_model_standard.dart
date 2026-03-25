@@ -2,16 +2,31 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:llama_cpp_dart/llama_cpp_dart.dart';
+import 'package:llamadart/llamadart.dart';
 
 import '../../llmcpp.dart';
-import '../native/library_loader.dart';
 
 class LlmModelStandard extends LlmModelBase {
   final LlmConfig config;
-  Llama? _llama;
+  LlamaEngine? _engine;
 
   LlmModelStandard(this.config);
+
+  ModelParams get _modelParams => ModelParams(
+    contextSize: config.nCtxDefault,
+    gpuLayers: config.nGpuLayersDefault,
+    batchSize: config.nBatchDefault,
+    numberOfThreads: config.nThreadsDefault,
+    preferredBackend: config.gpuBackendDefault,
+  );
+
+  GenerationParams get _genParams => GenerationParams(
+    maxTokens: config.nPredictDefault,
+    temp: config.tempDefault,
+    topK: config.topKDefault,
+    topP: config.topPDefault,
+    penalty: config.penaltyRepeatDefault,
+  );
 
   @override
   Future<void> loadModel(String localPath) async {
@@ -21,24 +36,12 @@ class LlmModelStandard extends LlmModelBase {
       throw FileSystemException('File not found', localPath);
     }
 
-    LibraryLoader.initialize();
+    _engine = LlamaEngine(LlamaBackend());
+    await _engine!.loadModel(localPath, modelParams: _modelParams);
 
-    _llama = Llama(
-      localPath,
-      modelParams: ModelParams()
-        ..nGpuLayers = config.nGpuLayersDefault
-        ..mainGpu = -1,
-      contextParams: ContextParams()
-        ..nPredict = config.nPredictDefault
-        ..nCtx = config.nCtxDefault
-        ..nBatch = config.nBatchDefault
-        ..nThreads = config.nThreadsDefault,
-      samplerParams: SamplerParams()
-        ..temp = config.tempDefault
-        ..topK = config.topKDefault
-        ..topP = config.topPDefault
-        ..penaltyRepeat = config.penaltyRepeatDefault,
-    );
+    if (config.mmprojPath != null) {
+      await _engine!.loadMultimodalProjector(config.mmprojPath!);
+    }
 
     markAsInitialized();
   }
@@ -46,25 +49,21 @@ class LlmModelStandard extends LlmModelBase {
   @override
   Stream<String> sendPrompt(String prompt) {
     checkInitialized();
-
-    final formattedPrompt = config.promptFormatDefault.formatPrompt(prompt);
-    _llama!.setPrompt(formattedPrompt);
-
-    return _llamaBufferedStream();
+    return _bufferedStream(prompt);
   }
 
   @override
   Future<String> sendPromptComplete(String prompt) async {
     checkInitialized();
-
     markGenerationStart();
     try {
-      final formattedPrompt = config.promptFormatDefault.formatPrompt(prompt);
-      _llama!.setPrompt(formattedPrompt);
-
       final buffer = StringBuffer();
-      await for (final token in _llama!.generateText()) {
-        buffer.write(token);
+      await for (final chunk in _engine!.create(
+        [LlamaChatMessage.fromText(role: LlamaChatRole.user, text: prompt)],
+        params: _genParams,
+      )) {
+        final text = chunk.choices.firstOrNull?.delta.content;
+        if (text != null) buffer.write(text);
       }
       return buffer.toString();
     } finally {
@@ -72,8 +71,8 @@ class LlmModelStandard extends LlmModelBase {
     }
   }
 
-  Stream<String> _llamaBufferedStream() async* {
-    if (_llama == null) return;
+  Stream<String> _bufferedStream(String prompt) async* {
+    if (_engine == null) return;
 
     final buffer = StringBuffer();
     final stopwatch = Stopwatch()..start();
@@ -81,8 +80,14 @@ class LlmModelStandard extends LlmModelBase {
 
     markGenerationStart();
     try {
-      await for (final token in _llama!.generateText()) {
-        buffer.write(token);
+      await for (final chunk in _engine!.create(
+        [LlamaChatMessage.fromText(role: LlamaChatRole.user, text: prompt)],
+        params: _genParams,
+      )) {
+        final text = chunk.choices.firstOrNull?.delta.content;
+        if (text == null) continue;
+
+        buffer.write(text);
 
         if (stopwatch.elapsed >= yieldInterval) {
           if (buffer.isNotEmpty) {
@@ -107,33 +112,167 @@ class LlmModelStandard extends LlmModelBase {
     checkInitialized();
 
     final startTime = DateTime.now();
-    final formattedPrompt = config.promptFormatDefault.formatPrompt(prompt);
     int totalTokenCount = 0;
-
-    _llama!.setPrompt(formattedPrompt);
 
     markGenerationStart();
     try {
-      await for (final chunk in _llama!.generateText()) {
+      await for (final chunk in _engine!.create(
+        [LlamaChatMessage.fromText(role: LlamaChatRole.user, text: prompt)],
+        params: _genParams,
+      )) {
+        final text = chunk.choices.firstOrNull?.delta.content;
+        if (text == null) continue;
+
         totalTokenCount += 1;
 
-        final metrics = PerformanceMetrics.fromGeneration(
+        yield StreamingChunk(
+          text: text,
+          metrics: PerformanceMetrics.fromGeneration(
+            tokenCount: totalTokenCount,
+            startTime: startTime,
+            endTime: DateTime.now(),
+          ),
+          isFinal: false,
+        );
+      }
+
+      yield StreamingChunk(
+        text: '',
+        metrics: PerformanceMetrics.fromGeneration(
           tokenCount: totalTokenCount,
           startTime: startTime,
           endTime: DateTime.now(),
-        );
+        ),
+        isFinal: true,
+      );
+    } finally {
+      markGenerationEnd();
+    }
+  }
 
-        yield StreamingChunk(text: chunk, metrics: metrics, isFinal: false);
+  @override
+  Stream<String> sendPromptWithImages(String prompt, List<LlamaImageContent> images) {
+    checkInitialized();
+    return _bufferedStreamWithImages(prompt, images);
+  }
+
+  @override
+  Future<String> sendPromptCompleteWithImages(
+    String prompt,
+    List<LlamaImageContent> images,
+  ) async {
+    checkInitialized();
+    markGenerationStart();
+    try {
+      final buffer = StringBuffer();
+      await for (final chunk in _engine!.create(
+        [
+          LlamaChatMessage.withContent(
+            role: LlamaChatRole.user,
+            content: [LlamaTextContent(prompt), ...images],
+          ),
+        ],
+        params: _genParams,
+      )) {
+        final text = chunk.choices.firstOrNull?.delta.content;
+        if (text != null) buffer.write(text);
+      }
+      return buffer.toString();
+    } finally {
+      markGenerationEnd();
+    }
+  }
+
+  @override
+  Stream<StreamingChunk> sendPromptStreamWithImages(
+    String prompt,
+    List<LlamaImageContent> images,
+  ) async* {
+    checkInitialized();
+
+    final startTime = DateTime.now();
+    int totalTokenCount = 0;
+
+    markGenerationStart();
+    try {
+      await for (final chunk in _engine!.create(
+        [
+          LlamaChatMessage.withContent(
+            role: LlamaChatRole.user,
+            content: [LlamaTextContent(prompt), ...images],
+          ),
+        ],
+        params: _genParams,
+      )) {
+        final text = chunk.choices.firstOrNull?.delta.content;
+        if (text == null) continue;
+
+        totalTokenCount += 1;
+
+        yield StreamingChunk(
+          text: text,
+          metrics: PerformanceMetrics.fromGeneration(
+            tokenCount: totalTokenCount,
+            startTime: startTime,
+            endTime: DateTime.now(),
+          ),
+          isFinal: false,
+        );
       }
 
-      final endTime = DateTime.now();
-      final finalMetrics = PerformanceMetrics.fromGeneration(
-        tokenCount: totalTokenCount,
-        startTime: startTime,
-        endTime: endTime,
+      yield StreamingChunk(
+        text: '',
+        metrics: PerformanceMetrics.fromGeneration(
+          tokenCount: totalTokenCount,
+          startTime: startTime,
+          endTime: DateTime.now(),
+        ),
+        isFinal: true,
       );
+    } finally {
+      markGenerationEnd();
+    }
+  }
 
-      yield StreamingChunk(text: '', metrics: finalMetrics, isFinal: true);
+  Stream<String> _bufferedStreamWithImages(
+    String prompt,
+    List<LlamaImageContent> images,
+  ) async* {
+    if (_engine == null) return;
+
+    final buffer = StringBuffer();
+    final stopwatch = Stopwatch()..start();
+    const yieldInterval = Duration(milliseconds: 50);
+
+    markGenerationStart();
+    try {
+      await for (final chunk in _engine!.create(
+        [
+          LlamaChatMessage.withContent(
+            role: LlamaChatRole.user,
+            content: [LlamaTextContent(prompt), ...images],
+          ),
+        ],
+        params: _genParams,
+      )) {
+        final text = chunk.choices.firstOrNull?.delta.content;
+        if (text == null) continue;
+
+        buffer.write(text);
+
+        if (stopwatch.elapsed >= yieldInterval) {
+          if (buffer.isNotEmpty) {
+            yield buffer.toString();
+            buffer.clear();
+          }
+          stopwatch.reset();
+          await Future.delayed(Duration.zero);
+        }
+      }
+
+      if (buffer.isNotEmpty) {
+        yield buffer.toString();
+      }
     } finally {
       markGenerationEnd();
     }
@@ -141,14 +280,14 @@ class LlmModelStandard extends LlmModelBase {
 
   @override
   void dispose() {
-    _llama?.dispose();
-    _llama = null;
+    _engine?.dispose(); // Future<void> — fire-and-forget
+    _engine = null;
     markAsDisposed();
   }
 
   @override
   void clean() {
     checkInitialized();
-    _llama?.clear();
+    // create() is stateless in llamadart — no context to reset
   }
 }

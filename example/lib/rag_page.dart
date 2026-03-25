@@ -130,7 +130,6 @@ class _RagPageState extends State<RagPage> {
         _embeddingModelReady = true;
       }
     });
-
   }
 
   // ── Model downloads ────────────────────────────────────────────────────
@@ -215,12 +214,14 @@ class _RagPageState extends State<RagPage> {
         temp: 0.3,
         topP: 0.85,
         topK: 30,
-        nBatch: 1024,
+        // nBatch: 1024,
+        nBatch: 32,
         penaltyRepeat: 1.15,
         nCtx: 4096,
-        nGpuLayers: 4,
+        nGpuLayers: 6,
         nThreads: 4,
         nPredict: 512,
+        gpuBackend: GpuBackend.auto,
       ),
       chunker: const TextChunker(chunkSize: 600, chunkOverlap: 100),
     );

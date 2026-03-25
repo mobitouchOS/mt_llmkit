@@ -14,14 +14,19 @@ A Flutter plugin for running Large Language Models (LLMs) locally on Android and
    - [Generation methods](#generation-methods)
    - [Prompt formats](#prompt-formats)
    - [Performance metrics](#performance-metrics)
-3. [Cloud API Providers](#cloud-api-providers)
+3. [Vision (Multimodal)](#vision-multimodal)
+   - [Quick start](#quick-start-vision)
+   - [Supported models](#supported-models)
+   - [Image input](#image-input)
+   - [Generation methods](#generation-methods-1)
+4. [Cloud API Providers](#cloud-api-providers)
    - [Supported providers](#supported-providers)
    - [Basic usage](#basic-usage)
    - [Multi-turn conversations](#multi-turn-conversations)
    - [Streaming](#streaming)
    - [Provider-specific config](#provider-specific-config)
    - [Error handling](#error-handling)
-4. [Local RAG Pipeline](#local-rag-pipeline)
+5. [Local RAG Pipeline](#local-rag-pipeline)
    - [How it works](#how-it-works)
    - [Quick start](#quick-start-1)
    - [Document ingestion](#document-ingestion)
@@ -182,6 +187,90 @@ plugin.sendPromptStream('Explain Dart isolates in detail.').listen((chunk) {
   }
 });
 ```
+---
+
+## Vision (Multimodal)
+
+`GgufPlugin` supports multimodal vision models (LLaVA, Gemma 3, Qwen VL, SmolVLM, etc.) that can analyse images alongside a text prompt. Vision requires two GGUF files: the main language model and a **multimodal projector** (`mmproj-*.gguf`).
+
+### Quick start (vision) {#quick-start-vision}
+
+```dart
+final plugin = GgufPlugin(
+  config: LlmConfig(
+    mmprojPath: '/path/to/mmproj-model-f16-4B.gguf',
+    nGpuLayers: 4,
+    nCtx: 4096,
+    nPredict: 512,
+    temp: 0.3,
+  ),
+);
+
+await plugin.loadModel('/path/to/gemma-3-4b-it-q4_0.gguf');
+
+final image = LlamaImage.fromFile(File('/path/to/photo.jpg'));
+
+plugin.sendPromptStreamWithImages(
+  'Describe what you see in this image. <image>',
+  [image],
+).listen((chunk) {
+  stdout.write(chunk.text);
+
+  if (chunk.isFinal && chunk.metrics != null) {
+    print('\n--- ${chunk.metrics!.tokensPerSecond.toStringAsFixed(1)} t/s ---');
+  }
+});
+```
+
+> **Important:** The prompt must contain one `<image>` placeholder per image passed in the list.
+
+### Supported models
+
+Any vision GGUF model that uses the `libmtmd` multimodal projection layer is supported. Tested models:
+
+| Model | Notes |
+|---|---|
+| Gemma 3 (4B, 12B, 27B) | Recommended. Good accuracy, available in Q4 quantisation. |
+| Qwen 2.5 VL | Strong OCR and document understanding. |
+| LLaVA 1.5 / 1.6 | Classic CLIP-based architecture. |
+| SmolVLM | Compact, fast, good for mobile devices. |
+
+Each model has a corresponding `mmproj-*.gguf` file available on Hugging Face alongside the main model.
+
+### Image input
+
+`LlamaImage` can be created from a file path or raw bytes:
+
+```dart
+// From a file (preferred — passes only the path to the isolate)
+final image = LlamaImage.fromFile(File('/path/to/photo.jpg'));
+
+// From raw bytes (e.g. from a network request or asset)
+final bytes = await File('/path/to/photo.png').readAsBytes();
+final image = LlamaImage.fromBytes(bytes);
+```
+
+Supported formats: JPEG, PNG, and any format decodable by the `image` package.
+
+### Generation methods (vision) {#generation-methods-1}
+
+| Method | Return type | Description |
+|---|---|---|
+| `sendPromptWithImages(prompt, images)` | `Stream<String>` | Raw token stream. |
+| `sendPromptCompleteWithImages(prompt, images)` | `Future<String>` | Full response as a single string. |
+| `sendPromptStreamWithImages(prompt, images)` | `Stream<StreamingChunk>` | **Recommended.** Streaming with live performance metrics. |
+
+All three methods throw `UnsupportedError` if `LlmConfig.mmprojPath` was not set.
+
+```dart
+// Full response at once
+final response = await plugin.sendPromptCompleteWithImages(
+  'What objects are visible in this photo? <image>',
+  [LlamaImage.fromFile(File('/path/to/photo.jpg'))],
+);
+print(response);
+```
+
 ---
 
 ## Cloud API Providers

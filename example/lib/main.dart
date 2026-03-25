@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'rag_page.dart';
 import 'rest_api_tab.dart';
+import 'vision_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -42,13 +43,18 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> {
   int _selectedIndex = 0;
 
-  static const _pages = [LlmDemoPage(), RagPage()];
+  static const _pages = [LlmDemoPage(), VisionPage(), RagPage()];
 
   static const _labels = [
     NavigationDestination(
       icon: Icon(Icons.chat_outlined),
       selectedIcon: Icon(Icons.chat),
       label: 'LLM',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.image_outlined),
+      selectedIcon: Icon(Icons.image),
+      label: 'Vision',
     ),
     NavigationDestination(
       icon: Icon(Icons.search_outlined),
@@ -62,9 +68,11 @@ class _MainPageState extends State<MainPage> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        title: Text(
-          _selectedIndex == 0 ? 'llmcpp — LLM Demo' : 'llmcpp — RAG Demo',
-        ),
+        title: Text(switch (_selectedIndex) {
+          0 => 'llmcpp — LLM Demo',
+          1 => 'llmcpp — Vision Demo',
+          _ => 'llmcpp — RAG Demo',
+        }),
       ),
       body: IndexedStack(index: _selectedIndex, children: _pages),
       bottomNavigationBar: NavigationBar(
@@ -194,7 +202,10 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
     _ggufPlugin = null;
 
     try {
-      _ggufPlugin = GgufPlugin(backend: GGUFBackend.isolate);
+      _ggufPlugin = GgufPlugin(
+        backend: GGUFBackend.isolate,
+        config: const LlmConfig(),
+      );
       await _ggufPlugin!.loadModel(_modelPath!);
       return true;
     } catch (e) {
@@ -307,7 +318,6 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
         // ── Rest API tab — fully self-contained ───────────────────────────────
         if (_selectedProvider == ProviderType.restApi)
           const Expanded(child: RestApiTab())
-
         // ── Local GGUF tab ────────────────────────────────────────────────────
         else ...[
           _buildLocalGGUFSection(),
@@ -329,8 +339,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
             Container(
               color: Colors.blue.shade50,
               width: double.infinity,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               child: Text(
                 _metricsText,
                 style: TextStyle(
@@ -374,8 +383,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
             Container(
               color: Colors.grey.shade100,
               width: double.infinity,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Text(
                 _statusMessage,
                 style: const TextStyle(fontSize: 11, color: Colors.black54),

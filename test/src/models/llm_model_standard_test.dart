@@ -78,12 +78,17 @@ void main() {
       expect(model.isInitialized, false);
     });
 
-    test('should accept custom prompt format', () {
-      final config = LlmConfig(promptFormat: AlpacaFormat());
+    test('should accept config with all numeric params', () {
+      const config = LlmConfig(
+        nGpuLayers: 4,
+        temp: 0.5,
+        topP: 0.8,
+      );
 
       final model = LlmModelStandard(config);
 
       expect(model, isNotNull);
+      model.dispose();
     });
   });
 

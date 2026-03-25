@@ -138,44 +138,14 @@ void main() {
       expect(config.penaltyRepeatDefault, 1.2);
     });
 
-    test('Should work with different prompt formats', () {
-      final chatmlConfig = LlmConfig(promptFormat: ChatMLFormat());
-      final alpacaConfig = LlmConfig(promptFormat: AlpacaFormat());
-      final gemmaConfig = LlmConfig(promptFormat: GemmaFormat());
+    test('Should work with different configs', () {
+      const chatmlConfig = LlmConfig(temp: 0.5);
+      const alpacaConfig = LlmConfig(nGpuLayers: 0);
+      const gemmaConfig = LlmConfig(nCtx: 4096);
 
-      expect(chatmlConfig.promptFormatDefault, isA<ChatMLFormat>());
-      expect(alpacaConfig.promptFormatDefault, isA<AlpacaFormat>());
-      expect(gemmaConfig.promptFormatDefault, isA<GemmaFormat>());
-    });
-  });
-
-  group('Prompt Format Tests', () {
-    test('ChatMLFormat should work with models', () {
-      final model = LlmModelIsolated(LlmConfig(promptFormat: ChatMLFormat()));
-      expect(model, isNotNull);
-      model.dispose();
-    });
-
-    test('AlpacaFormat should work with models', () {
-      final model = LlmModelIsolated(LlmConfig(promptFormat: AlpacaFormat()));
-      expect(model, isNotNull);
-      model.dispose();
-    });
-
-    test('GemmaFormat should work with models', () {
-      final model = LlmModelIsolated(LlmConfig(promptFormat: GemmaFormat()));
-      expect(model, isNotNull);
-      model.dispose();
-    });
-
-    test('All formats should be instantiable', () {
-      final chatml = ChatMLFormat();
-      final alpaca = AlpacaFormat();
-      final gemma = GemmaFormat();
-
-      expect(chatml, isNotNull);
-      expect(alpaca, isNotNull);
-      expect(gemma, isNotNull);
+      expect(chatmlConfig.tempDefault, 0.5);
+      expect(alpacaConfig.nGpuLayersDefault, 0);
+      expect(gemmaConfig.nCtxDefault, 4096);
     });
   });
 

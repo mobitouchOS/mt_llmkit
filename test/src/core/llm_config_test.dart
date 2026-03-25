@@ -6,7 +6,7 @@ void main() {
     test('should create config with default values', () {
       const config = LlmConfig();
 
-      expect(config.nGpuLayersDefault, 64);
+      expect(config.nGpuLayersDefault, 10);
       expect(config.nCtxDefault, 8192);
       expect(config.nBatchDefault, 4096);
       expect(config.nPredictDefault, 8192);
@@ -15,7 +15,6 @@ void main() {
       expect(config.topKDefault, 64);
       expect(config.topPDefault, 0.95);
       expect(config.penaltyRepeatDefault, 1.1);
-      expect(config.promptFormatDefault, isA<ChatMLFormat>());
     });
 
     test('should create config with custom values', () {
@@ -42,17 +41,10 @@ void main() {
       expect(config.penaltyRepeatDefault, 1.2);
     });
 
-    test('should use custom prompt format', () {
-      final format = AlpacaFormat();
-      final config = LlmConfig(promptFormat: format);
-
-      expect(config.promptFormatDefault, equals(format));
-    });
-
     test('should handle null values gracefully', () {
       const config = LlmConfig(nGpuLayers: null, nCtx: null);
 
-      expect(config.nGpuLayersDefault, 64);
+      expect(config.nGpuLayersDefault, 10);
       expect(config.nCtxDefault, 8192);
     });
 

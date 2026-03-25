@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**llmcpp** is a Flutter plugin that enables running Large Language Models (LLMs) locally on Android and iOS using the `llama.cpp` library via FFI (`llama_cpp_dart ^0.2.2`). It provides real-time streaming inference and performance metrics.
+**llmcpp** is a Flutter plugin that enables running Large Language Models (LLMs) locally on Android and iOS using the `llama.cpp` library via FFI (`llamadart ^0.6.8`). It provides real-time streaming inference and performance metrics.
 
 ## Commands
 
@@ -35,15 +35,15 @@ cd example && flutter pub get && flutter run
 
 ### Public API
 
-`lib/llmcpp.dart` is the single export file. It re-exports everything from `src/` plus selected symbols from `llama_cpp_dart` (`PromptFormat`, `ChatMLFormat`, `AlpacaFormat`, `GemmaFormat`).
+`lib/llmcpp.dart` is the single export file. It re-exports everything from `src/` plus `LlamaImageContent`, `LlamaTextContent`, `LlamaContentPart` from `llamadart`.
 
 ### Class Hierarchy
 
 ```
 LlmInterface (abstract interface)
   └─ LlmModelBase (abstract, shared state management)
-       ├─ LlmModelIsolated  → wraps LlamaParent (isolated process)
-       └─ LlmModelStandard  → wraps Llama directly (in-process)
+       ├─ LlmModelIsolated  → wraps LlamaEngine in a Dart Isolate
+       └─ LlmModelStandard  → wraps LlamaEngine directly (in-process)
 ```
 
 Both model classes share the same lifecycle: `loadModel(path)` → generate → `dispose()`.
@@ -58,7 +58,7 @@ Both model classes share the same lifecycle: `loadModel(path)` → generate → 
 
 ### Configuration
 
-`LlmConfig` is an immutable config object. Key parameters: `temp`, `nGpuLayers`, `nCtx`, `nBatch`, `nThreads`, `topK`, `topP`, `penaltyRepeat`, `promptFormat`.
+`LlmConfig` is an immutable config object. Key parameters: `temp`, `nGpuLayers`, `nCtx`, `nBatch`, `nThreads`, `topK`, `topP`, `penaltyRepeat`, `mmprojPath`.
 
 ### Prompt Formats (Strategy pattern)
 
@@ -66,13 +66,13 @@ Set via `LlmConfig.promptFormat`. Built-in: `ChatMLFormat()`, `AlpacaFormat()`, 
 
 ### Performance Metrics
 
-`PerformanceMetrics` tracks `tokensGenerated`, `durationMs`, `tokensPerSecond`, `msPerToken`. Token counting is **estimated** (word + punctuation based, ~75–90% accuracy) via `LlmUtils.estimateTokenCount()` in `lib/src/utils/llm_utils.dart`.
+`PerformanceMetrics` tracks `tokensGenerated`, `durationMs`, `tokensPerSecond`, `msPerToken`. Token counting is **estimated** (word + punctuation based, ~75–90% accuracy) via `LlmUtils.tokenizerEstimateTokens()` in `lib/src/utils/llm_utils.dart`.
 
 ### Native Libraries
 
 - Android: pre-compiled `.so` files in `android/src/main/jniLibs/{arm64-v8a,x86_64}/`
 - iOS: native frameworks via CocoaPods (`ios/llmcpp.podspec`)
-- Loading logic: `lib/src/native/library_loader.dart`
+- Loading managed by `llamadart` via Dart Build Hooks (no manual preloading required)
 
 ## Test Infrastructure
 

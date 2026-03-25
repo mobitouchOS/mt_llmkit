@@ -28,10 +28,9 @@ void main() {
       model.dispose();
     });
 
-    test('should export PromptFormat classes', () {
-      expect(ChatMLFormat(), isNotNull);
-      expect(AlpacaFormat(), isNotNull);
-      expect(GemmaFormat(), isNotNull);
+    test('should export LlamaImageContent', () {
+      const image = LlamaImageContent(path: '/test/image.jpg');
+      expect(image, isNotNull);
     });
   });
 }

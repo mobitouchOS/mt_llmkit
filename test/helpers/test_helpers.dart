@@ -56,18 +56,6 @@ class TestHelpers {
       model.dispose();
     }
   }
-
-  /// Creates a list of all supported formats
-  static List<PromptFormat> allPromptFormats() {
-    return [ChatMLFormat(), AlpacaFormat(), GemmaFormat()];
-  }
-
-  /// Creates a list of configurations with different formats
-  static List<LlmConfig> configsWithAllFormats() {
-    return allPromptFormats()
-        .map((format) => LlmConfig(promptFormat: format))
-        .toList();
-  }
 }
 
 /// Matcher for checking StateError
@@ -120,7 +108,6 @@ class TestConfigBuilder {
   int? _topK;
   double? _topP;
   double? _penaltyRepeat;
-  PromptFormat? _promptFormat;
 
   TestConfigBuilder withGpuLayers(int layers) {
     _nGpuLayers = layers;
@@ -167,11 +154,6 @@ class TestConfigBuilder {
     return this;
   }
 
-  TestConfigBuilder withPromptFormat(PromptFormat format) {
-    _promptFormat = format;
-    return this;
-  }
-
   LlmConfig build() {
     return LlmConfig(
       nGpuLayers: _nGpuLayers,
@@ -183,7 +165,6 @@ class TestConfigBuilder {
       topK: _topK,
       topP: _topP,
       penaltyRepeat: _penaltyRepeat,
-      promptFormat: _promptFormat,
     );
   }
 }
@@ -221,24 +202,6 @@ void main() {
         shouldBeDisposed: true,
       );
     });
-
-    test('should create all prompt formats', () {
-      final formats = TestHelpers.allPromptFormats();
-
-      expect(formats, hasLength(3));
-      expect(formats[0], isA<ChatMLFormat>());
-      expect(formats[1], isA<AlpacaFormat>());
-      expect(formats[2], isA<GemmaFormat>());
-    });
-
-    test('should create configs with all formats', () {
-      final configs = TestHelpers.configsWithAllFormats();
-
-      expect(configs, hasLength(3));
-      expect(configs[0].promptFormatDefault, isA<ChatMLFormat>());
-      expect(configs[1].promptFormatDefault, isA<AlpacaFormat>());
-      expect(configs[2].promptFormatDefault, isA<GemmaFormat>());
-    });
   });
 
   group('TestConfigBuilder', () {
@@ -249,7 +212,6 @@ void main() {
           .withBatch(2048)
           .withThreads(4)
           .withTemperature(0.8)
-          .withPromptFormat(AlpacaFormat())
           .build();
 
       expect(config.nGpuLayersDefault, 32);
@@ -257,7 +219,6 @@ void main() {
       expect(config.nBatchDefault, 2048);
       expect(config.nThreadsDefault, 4);
       expect(config.tempDefault, 0.8);
-      expect(config.promptFormatDefault, isA<AlpacaFormat>());
     });
 
     test('should build minimal config', () {
@@ -270,11 +231,10 @@ void main() {
       expect(config.nCtxDefault, 128);
     });
 
-    test('should build empty config', () {
+    test('should build empty config with defaults', () {
       final config = TestConfigBuilder().build();
 
-      // Should use defaults
-      expect(config.nGpuLayersDefault, 64);
+      expect(config.nGpuLayersDefault, 10);
       expect(config.nCtxDefault, 8192);
     });
   });

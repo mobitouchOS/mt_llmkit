@@ -1,7 +1,6 @@
-import '../../llmcpp.dart';
+import 'package:llamadart/llamadart.dart' show GpuBackend;
 
 class LlmConfig {
-  final PromptFormat? promptFormat;
   final int? nGpuLayers;
   final int? nCtx;
   final int? nBatch;
@@ -12,8 +11,20 @@ class LlmConfig {
   final double? topP;
   final double? penaltyRepeat;
 
+  /// GPU backend to use for inference. Defaults to [GpuBackend.auto] which
+  /// tries Vulkan → Metal → CUDA → CPU in order. Use [GpuBackend.cpu] to
+  /// disable GPU acceleration entirely (useful when Vulkan causes crashes).
+  final GpuBackend? gpuBackend;
+
+  /// Path to the multimodal projector GGUF file (e.g. `mmproj-model-f16.gguf`).
+  ///
+  /// Required when using vision models (LLaVA, Gemma 3, Qwen VL, etc.).
+  /// When set, [GgufPlugin.sendPromptWithImages],
+  /// [GgufPlugin.sendPromptCompleteWithImages], and
+  /// [GgufPlugin.sendPromptStreamWithImages] become available.
+  final String? mmprojPath;
+
   const LlmConfig({
-    this.promptFormat,
     this.nGpuLayers,
     this.nCtx,
     this.nBatch,
@@ -23,6 +34,8 @@ class LlmConfig {
     this.topK,
     this.topP,
     this.penaltyRepeat,
+    this.gpuBackend,
+    this.mmprojPath,
   });
 
   int get nGpuLayersDefault => nGpuLayers ?? 64;
@@ -34,5 +47,6 @@ class LlmConfig {
   int get topKDefault => topK ?? 64;
   double get topPDefault => topP ?? 0.95;
   double get penaltyRepeatDefault => penaltyRepeat ?? 1.1;
-  PromptFormat get promptFormatDefault => promptFormat ?? ChatMLFormat();
+  // For android set cpu backend by default to avoid Vulkan crashes, but allow GPU acceleration on other platforms by default.
+  GpuBackend get gpuBackendDefault => gpuBackend ?? GpuBackend.auto;
 }

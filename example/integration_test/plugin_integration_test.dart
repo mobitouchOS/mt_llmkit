@@ -61,24 +61,18 @@ void main() {
       expect(config.penaltyRepeatDefault, 1.1);
     });
 
-    test('Should support different prompt formats', () {
-      final chatmlModel = LlmModelIsolated(
-        LlmConfig(promptFormat: ChatMLFormat()),
-      );
-      final alpacaModel = LlmModelIsolated(
-        LlmConfig(promptFormat: AlpacaFormat()),
-      );
-      final gemmaModel = LlmModelIsolated(
-        LlmConfig(promptFormat: GemmaFormat()),
-      );
+    test('Should support different configs', () {
+      final model1 = LlmModelIsolated(const LlmConfig(temp: 0.5));
+      final model2 = LlmModelIsolated(const LlmConfig(nGpuLayers: 0));
+      final model3 = LlmModelIsolated(const LlmConfig(nCtx: 4096));
 
-      expect(chatmlModel, isNotNull);
-      expect(alpacaModel, isNotNull);
-      expect(gemmaModel, isNotNull);
+      expect(model1, isNotNull);
+      expect(model2, isNotNull);
+      expect(model3, isNotNull);
 
-      chatmlModel.dispose();
-      alpacaModel.dispose();
-      gemmaModel.dispose();
+      model1.dispose();
+      model2.dispose();
+      model3.dispose();
     });
 
     test('Model should throw error on operations after dispose', () {

@@ -83,7 +83,7 @@ SPEC CHECKSUMS:
   file_picker: b159e0c068aef54932bb15dc9fd1571818edaf49
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   integration_test: 252f60fa39af5e17c3aa9899d35d908a0721b573
-  llmcpp: 4be24de8410976e1e3fc65a3d8df8015de774f56
+  llmcpp: d99fe28a771fb5ab66bfc55abcf00d5ac54fada3
   path_provider_foundation: 0b743cbb62d8e47eab856f09262bb8c1ddcfe6ba
   read_pdf_text: e29ee5e80e1dad2f855cdbfc0cbb2097a1cae569
   SDWebImage: 1bb6a1b84b6fe87b972a102bdc77dd589df33477
