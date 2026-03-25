@@ -79,7 +79,7 @@ class _RagPageState extends State<RagPage> {
   double _downloadProgressEmbed = 0;
 
   // ── State: pipeline ────────────────────────────────────────────────────
-  RagPlugin? _rag;
+  RagEngine? _rag;
   bool get _pipelineReady => _rag?.isReady ?? false;
 
   // ── State: documents ───────────────────────────────────────────────────
@@ -206,7 +206,7 @@ class _RagPageState extends State<RagPage> {
     if (!_generationModelReady || !_embeddingModelReady) return;
 
     final dir = await getApplicationDocumentsDirectory();
-    final rag = RagPlugin(
+    final rag = RagEngine(
       genModelPath: _generationModelPath!,
       embedModelPath: _embeddingModelPath!,
       indexPath: '${dir.path}/rag_index.json',
@@ -293,7 +293,7 @@ class _RagPageState extends State<RagPage> {
 
   /// Document ingestion: chunk → embed → store.
   ///
-  /// The [RagPlugin.ingestDocument] stream reports progress after each
+  /// The [RagEngine.ingestDocument] stream reports progress after each
   /// embedded chunk — we update the UI in real time.
   Future<void> _ingestDocument(Document document) async {
     if (_rag == null) return;

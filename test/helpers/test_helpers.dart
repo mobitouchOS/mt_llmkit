@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llmcpp/llmcpp.dart';
+import 'package:llmcpp/src/models/llm_model_base.dart';
+import 'package:llmcpp/src/models/llm_model_isolated.dart';
+import 'package:llmcpp/src/models/llm_model_standard.dart';
 
 /// Helper functions for tests
 class TestHelpers {
@@ -234,7 +237,7 @@ void main() {
     test('should build empty config with defaults', () {
       final config = TestConfigBuilder().build();
 
-      expect(config.nGpuLayersDefault, 10);
+      expect(config.nGpuLayersDefault, 64);
       expect(config.nCtxDefault, 8192);
     });
   });

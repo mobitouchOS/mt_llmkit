@@ -1,4 +1,4 @@
-// lib/src/rag/rag_plugin.dart
+// lib/src/rag/rag_engine.dart
 
 import '../core/llm_config.dart';
 import '../core/streaming_result.dart';
@@ -11,7 +11,7 @@ import 'vector_store/vector_store.dart';
 
 /// Facade over [LlamaRagCoordinator] + [InMemoryVectorStore] + [RagPipeline].
 ///
-/// Mirrors the lifecycle pattern of [LlmPlugin]:
+/// Lifecycle:
 ///   1. Construct with parameters
 ///   2. Call [initialize()] — async, loads both models in a single isolate
 ///   3. Use: [ingestDocument], [query], [findRelevant], [removeDocument], [clearIndex]
@@ -34,7 +34,7 @@ import 'vector_store/vector_store.dart';
 /// ## Example
 ///
 /// ```dart
-/// final rag = RagPlugin(
+/// final rag = RagEngine(
 ///   genModelPath: '/path/to/llama.gguf',
 ///   embedModelPath: '/path/to/nomic-embed.gguf',
 ///   indexPath: '${dir.path}/rag_index.json',
@@ -52,7 +52,7 @@ import 'vector_store/vector_store.dart';
 ///
 /// rag.dispose();
 /// ```
-class RagPlugin {
+class RagEngine {
   // ── Construction parameters ──────────────────────────────────────────────
 
   final String genModelPath;
@@ -76,7 +76,7 @@ class RagPlugin {
 
   // ── Constructor ──────────────────────────────────────────────────────────
 
-  RagPlugin({
+  RagEngine({
     required this.genModelPath,
     required this.embedModelPath,
     this.indexPath,
@@ -208,7 +208,7 @@ class RagPlugin {
 
   void _checkReady() {
     if (!_isReady) {
-      throw StateError('RagPlugin is not initialized. Call initialize() first.');
+      throw StateError('RagEngine is not initialized. Call initialize() first.');
     }
   }
 }

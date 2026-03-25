@@ -7,43 +7,26 @@ abstract interface class LlmInterface {
 
   /// Sends a prompt and returns a stream of tokens.
   ///
-  /// Use [isGenerating] to check if generation is still in progress.
-  Stream<String> sendPrompt(String prompt);
+  /// Pass [images] to enable vision (requires the model to have been loaded
+  /// with a multimodal projector via `mmprojPath` in [LlmConfig]).
+  Stream<String> sendPrompt(String prompt, {List<LlamaImageContent>? images});
 
   /// Sends a prompt and waits for the complete response.
-  Future<String> sendPromptComplete(String prompt);
+  ///
+  /// Pass [images] to enable vision.
+  Future<String> sendPromptComplete(
+    String prompt, {
+    List<LlamaImageContent>? images,
+  });
 
   /// Sends a prompt and returns a stream of [StreamingChunk] with live
-  /// performance metrics.
-  Stream<StreamingChunk> sendPromptStream(String prompt);
-
-  /// Sends a prompt with image attachments and returns a stream of tokens.
+  /// performance metrics. **Recommended** method for UI use.
   ///
-  /// Requires the model to have been loaded with a multimodal projector
-  /// (`mmprojPath` in [LlmConfig]). The prompt must contain one `<image>`
-  /// placeholder for each image in [images].
-  ///
-  /// Throws [UnsupportedError] if vision is not configured.
-  Stream<String> sendPromptWithImages(String prompt, List<LlamaImageContent> images);
-
-  /// Sends a prompt with image attachments and waits for the complete response.
-  ///
-  /// Requires the model to have been loaded with a multimodal projector.
-  /// Throws [UnsupportedError] if vision is not configured.
-  Future<String> sendPromptCompleteWithImages(
-    String prompt,
-    List<LlamaImageContent> images,
-  );
-
-  /// Sends a prompt with image attachments and returns a stream of
-  /// [StreamingChunk] with live performance metrics.
-  ///
-  /// Requires the model to have been loaded with a multimodal projector.
-  /// Throws [UnsupportedError] if vision is not configured.
-  Stream<StreamingChunk> sendPromptStreamWithImages(
-    String prompt,
-    List<LlamaImageContent> images,
-  );
+  /// Pass [images] to enable vision.
+  Stream<StreamingChunk> sendPromptStream(
+    String prompt, {
+    List<LlamaImageContent>? images,
+  });
 
   /// Whether generation is currently in progress.
   bool get isGenerating;

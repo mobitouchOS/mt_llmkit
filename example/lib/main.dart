@@ -96,7 +96,7 @@ class LlmDemoPage extends StatefulWidget {
 }
 
 class _LlmDemoPageState extends State<LlmDemoPage> {
-  GgufPlugin? _ggufPlugin;
+  LocalModel? _ggufPlugin;
   StreamSubscription<StreamingChunk>? _streamSubscription;
 
   ProviderType _selectedProvider = ProviderType.localGGUF;
@@ -202,8 +202,8 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
     _ggufPlugin = null;
 
     try {
-      _ggufPlugin = GgufPlugin(
-        backend: GGUFBackend.isolate,
+      _ggufPlugin = LocalModel(
+        backend: ModelBackend.inProcess,
         config: const LlmConfig(),
       );
       await _ggufPlugin!.loadModel(_modelPath!);

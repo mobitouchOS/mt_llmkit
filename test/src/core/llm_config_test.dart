@@ -6,7 +6,7 @@ void main() {
     test('should create config with default values', () {
       const config = LlmConfig();
 
-      expect(config.nGpuLayersDefault, 10);
+      expect(config.nGpuLayersDefault, 64);
       expect(config.nCtxDefault, 8192);
       expect(config.nBatchDefault, 4096);
       expect(config.nPredictDefault, 8192);
@@ -44,7 +44,7 @@ void main() {
     test('should handle null values gracefully', () {
       const config = LlmConfig(nGpuLayers: null, nCtx: null);
 
-      expect(config.nGpuLayersDefault, 10);
+      expect(config.nGpuLayersDefault, 64);
       expect(config.nCtxDefault, 8192);
     });
 

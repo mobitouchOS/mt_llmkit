@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llmcpp/llmcpp.dart';
+import 'package:llmcpp/src/models/llm_model_base.dart';
 
 /// Mock implementation for testing purposes
 class MockLlmModel extends LlmModelBase {
@@ -28,7 +29,7 @@ class MockLlmModel extends LlmModelBase {
   }
 
   @override
-  Stream<String> sendPrompt(String prompt) {
+  Stream<String> sendPrompt(String prompt, {List<LlamaImageContent>? images}) {
     checkInitialized();
     _sendPromptCalled = true;
     _lastPrompt = prompt;
@@ -36,7 +37,10 @@ class MockLlmModel extends LlmModelBase {
   }
 
   @override
-  Future<String> sendPromptComplete(String prompt) async {
+  Future<String> sendPromptComplete(
+    String prompt, {
+    List<LlamaImageContent>? images,
+  }) async {
     checkInitialized();
     _sendPromptCalled = true;
     _lastPrompt = prompt;
@@ -44,7 +48,10 @@ class MockLlmModel extends LlmModelBase {
   }
 
   @override
-  Stream<StreamingChunk> sendPromptStream(String prompt) async* {
+  Stream<StreamingChunk> sendPromptStream(
+    String prompt, {
+    List<LlamaImageContent>? images,
+  }) async* {
     checkInitialized();
     _sendPromptCalled = true;
     _lastPrompt = prompt;

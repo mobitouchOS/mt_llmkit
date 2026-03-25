@@ -12,25 +12,24 @@ void main() {
       expect(LlmInterface, isNotNull);
     });
 
-    test('should export LlmModelBase', () {
-      expect(LlmModelBase, isNotNull);
-    });
-
-    test('should export LlmModelStandard', () {
-      final model = LlmModelStandard(const LlmConfig());
+    test('should export LocalModel', () {
+      final model = LocalModel();
       expect(model, isNotNull);
       model.dispose();
     });
 
-    test('should export LlmModelIsolated', () {
-      final model = LlmModelIsolated(const LlmConfig());
-      expect(model, isNotNull);
-      model.dispose();
+    test('should export ModelBackend', () {
+      expect(ModelBackend.isolate, isNotNull);
+      expect(ModelBackend.inProcess, isNotNull);
     });
 
     test('should export LlamaImageContent', () {
       const image = LlamaImageContent(path: '/test/image.jpg');
       expect(image, isNotNull);
+    });
+
+    test('should export RagEngine', () {
+      expect(RagEngine, isNotNull);
     });
   });
 }

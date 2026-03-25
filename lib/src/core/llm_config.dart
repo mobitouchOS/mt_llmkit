@@ -19,9 +19,8 @@ class LlmConfig {
   /// Path to the multimodal projector GGUF file (e.g. `mmproj-model-f16.gguf`).
   ///
   /// Required when using vision models (LLaVA, Gemma 3, Qwen VL, etc.).
-  /// When set, [GgufPlugin.sendPromptWithImages],
-  /// [GgufPlugin.sendPromptCompleteWithImages], and
-  /// [GgufPlugin.sendPromptStreamWithImages] become available.
+  /// When set, pass images via the `images` parameter of [LocalModel.sendPromptStream]
+  /// and related methods to enable vision inference.
   final String? mmprojPath;
 
   const LlmConfig({

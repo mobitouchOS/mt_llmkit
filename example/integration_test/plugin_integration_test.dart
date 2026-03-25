@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:llmcpp/llmcpp.dart';
+import 'package:llmcpp/src/models/llm_model_isolated.dart';
+import 'package:llmcpp/src/models/llm_model_standard.dart';
 import 'package:llmcpp_example/main.dart';
 
 void main() {

@@ -1,6 +1,6 @@
 // example/lib/vision_page.dart
 //
-// Demonstrates GgufPlugin vision support:
+// Demonstrates LocalModel vision support:
 //
 //  1. Download vision model + mmproj (Gemma 3 4B)
 //  2. Pick an image from the device
@@ -73,7 +73,7 @@ class _VisionPageState extends State<VisionPage> {
   File? _selectedImage;
 
   // ── State: generation ─────────────────────────────────────────────────
-  GgufPlugin? _plugin;
+  LocalModel? _plugin;
   StreamSubscription<StreamingChunk>? _subscription;
   bool _isGenerating = false;
   String _output = '';
@@ -208,7 +208,7 @@ class _VisionPageState extends State<VisionPage> {
     if (_plugin != null && _plugin!.isInitialized) return true;
     _plugin?.dispose();
     try {
-      _plugin = GgufPlugin(
+      _plugin = LocalModel(
         config: LlmConfig(
           mmprojPath: _mmprojPath,
           nGpuLayers: 4,
@@ -256,7 +256,7 @@ class _VisionPageState extends State<VisionPage> {
     final image = LlamaImageContent(path: _selectedImage!.path);
 
     _subscription = _plugin!
-        .sendPromptStreamWithImages(prompt, [image])
+        .sendPromptStream(prompt, images: [image])
         .listen(
           (chunk) {
             setState(() {

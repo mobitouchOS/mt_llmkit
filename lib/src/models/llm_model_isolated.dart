@@ -5,7 +5,10 @@ import 'dart:isolate';
 
 import 'package:llamadart/llamadart.dart';
 
-import '../../llmcpp.dart';
+import '../core/llm_config.dart';
+import '../core/performance_metrics.dart';
+import '../core/streaming_result.dart';
+import 'llm_model_base.dart';
 
 // ── Worker Isolate entry point ─────────────────────────────────────────────
 
@@ -67,41 +70,18 @@ Future<void> _llamaIsolateWorkerMain(Map<String, dynamic> args) async {
     switch (message['type'] as String?) {
       case 'generate':
         final prompt = message['prompt'] as String;
+        final images = (message['images'] as List?)?.cast<LlamaImageContent>();
         final streamPort = message['streamPort'] as SendPort;
-        genSubscription = engine
-            .create(
-              [LlamaChatMessage.fromText(role: LlamaChatRole.user, text: prompt)],
-              params: genParams,
-            )
-            .listen(
-              (chunk) {
-                final text = chunk.choices.firstOrNull?.delta.content;
-                if (text != null) streamPort.send({'type': 'token', 'text': text});
-              },
-              onDone: () {
-                streamPort.send({'type': 'done'});
-                genSubscription = null;
-              },
-              onError: (Object e) {
-                streamPort.send({'type': 'error', 'message': '$e'});
-                genSubscription = null;
-              },
-            );
 
-      case 'generate_with_images':
-        final prompt = message['prompt'] as String;
-        final images = (message['images'] as List).cast<LlamaImageContent>();
-        final streamPort = message['streamPort'] as SendPort;
+        final msg = (images != null && images.isNotEmpty)
+            ? LlamaChatMessage.withContent(
+                role: LlamaChatRole.user,
+                content: [LlamaTextContent(prompt), ...images],
+              )
+            : LlamaChatMessage.fromText(role: LlamaChatRole.user, text: prompt);
+
         genSubscription = engine
-            .create(
-              [
-                LlamaChatMessage.withContent(
-                  role: LlamaChatRole.user,
-                  content: [LlamaTextContent(prompt), ...images],
-                ),
-              ],
-              params: genParams,
-            )
+            .create([msg], params: genParams)
             .listen(
               (chunk) {
                 final text = chunk.choices.firstOrNull?.delta.content;
@@ -225,19 +205,31 @@ class LlmModelIsolated extends LlmModelBase {
     }
   }
 
+  Map<String, dynamic> _buildMessage(
+    String prompt, {
+    List<LlamaImageContent>? images,
+  }) => {
+    'type': 'generate',
+    'prompt': prompt,
+    if (images != null && images.isNotEmpty) 'images': images,
+  };
+
   @override
-  Stream<String> sendPrompt(String prompt) {
+  Stream<String> sendPrompt(String prompt, {List<LlamaImageContent>? images}) {
     checkInitialized();
-    return _trackedStream({'type': 'generate', 'prompt': prompt});
+    return _trackedStream(_buildMessage(prompt, images: images));
   }
 
   @override
-  Future<String> sendPromptComplete(String prompt) async {
+  Future<String> sendPromptComplete(
+    String prompt, {
+    List<LlamaImageContent>? images,
+  }) async {
     checkInitialized();
     markGenerationStart();
     try {
       final buffer = StringBuffer();
-      await for (final token in _rawWorkerStream({'type': 'generate', 'prompt': prompt})) {
+      await for (final token in _rawWorkerStream(_buildMessage(prompt, images: images))) {
         buffer.write(token);
       }
       return buffer.toString();
@@ -247,7 +239,10 @@ class LlmModelIsolated extends LlmModelBase {
   }
 
   @override
-  Stream<StreamingChunk> sendPromptStream(String prompt) async* {
+  Stream<StreamingChunk> sendPromptStream(
+    String prompt, {
+    List<LlamaImageContent>? images,
+  }) async* {
     checkInitialized();
 
     final startTime = DateTime.now();
@@ -255,81 +250,7 @@ class LlmModelIsolated extends LlmModelBase {
 
     markGenerationStart();
     try {
-      await for (final token in _rawWorkerStream({'type': 'generate', 'prompt': prompt})) {
-        totalTokenCount += 1;
-        yield StreamingChunk(
-          text: token,
-          metrics: PerformanceMetrics.fromGeneration(
-            tokenCount: totalTokenCount,
-            startTime: startTime,
-            endTime: DateTime.now(),
-          ),
-          isFinal: false,
-        );
-      }
-      yield StreamingChunk(
-        text: '',
-        metrics: PerformanceMetrics.fromGeneration(
-          tokenCount: totalTokenCount,
-          startTime: startTime,
-          endTime: DateTime.now(),
-        ),
-        isFinal: true,
-      );
-    } finally {
-      markGenerationEnd();
-    }
-  }
-
-  @override
-  Stream<String> sendPromptWithImages(String prompt, List<LlamaImageContent> images) {
-    checkInitialized();
-    return _trackedStream({
-      'type': 'generate_with_images',
-      'prompt': prompt,
-      'images': images,
-    });
-  }
-
-  @override
-  Future<String> sendPromptCompleteWithImages(
-    String prompt,
-    List<LlamaImageContent> images,
-  ) async {
-    checkInitialized();
-    markGenerationStart();
-    try {
-      final buffer = StringBuffer();
-      await for (final token in _rawWorkerStream({
-        'type': 'generate_with_images',
-        'prompt': prompt,
-        'images': images,
-      })) {
-        buffer.write(token);
-      }
-      return buffer.toString();
-    } finally {
-      markGenerationEnd();
-    }
-  }
-
-  @override
-  Stream<StreamingChunk> sendPromptStreamWithImages(
-    String prompt,
-    List<LlamaImageContent> images,
-  ) async* {
-    checkInitialized();
-
-    final startTime = DateTime.now();
-    int totalTokenCount = 0;
-
-    markGenerationStart();
-    try {
-      await for (final token in _rawWorkerStream({
-        'type': 'generate_with_images',
-        'prompt': prompt,
-        'images': images,
-      })) {
+      await for (final token in _rawWorkerStream(_buildMessage(prompt, images: images))) {
         totalTokenCount += 1;
         yield StreamingChunk(
           text: token,

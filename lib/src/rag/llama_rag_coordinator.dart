@@ -216,7 +216,10 @@ class _CoordPlugin implements LlmInterface {
   Future<void> loadModel(String localPath) async {}
 
   @override
-  Stream<String> sendPrompt(String prompt) {
+  Stream<String> sendPrompt(String prompt, {List<LlamaImageContent>? images}) {
+    if (images != null && images.isNotEmpty) {
+      throw UnsupportedError('Vision is not supported in the RAG pipeline.');
+    }
     final controller = StreamController<String>();
     final replyPort = ReceivePort();
 
@@ -256,20 +259,26 @@ class _CoordPlugin implements LlmInterface {
   }
 
   @override
-  Future<String> sendPromptComplete(String prompt) async {
+  Future<String> sendPromptComplete(
+    String prompt, {
+    List<LlamaImageContent>? images,
+  }) async {
     final buffer = StringBuffer();
-    await for (final token in sendPrompt(prompt)) {
+    await for (final token in sendPrompt(prompt, images: images)) {
       buffer.write(token);
     }
     return buffer.toString();
   }
 
   @override
-  Stream<StreamingChunk> sendPromptStream(String prompt) async* {
+  Stream<StreamingChunk> sendPromptStream(
+    String prompt, {
+    List<LlamaImageContent>? images,
+  }) async* {
     final startTime = DateTime.now();
     int totalTokenCount = 0;
 
-    await for (final token in sendPrompt(prompt)) {
+    await for (final token in sendPrompt(prompt, images: images)) {
       totalTokenCount += 1;
       yield StreamingChunk(
         text: token,
@@ -298,27 +307,6 @@ class _CoordPlugin implements LlmInterface {
 
   @override
   void clean() {}
-
-  @override
-  Stream<String> sendPromptWithImages(String prompt, List<LlamaImageContent> images) {
-    throw UnsupportedError('Vision is not supported in the RAG pipeline.');
-  }
-
-  @override
-  Future<String> sendPromptCompleteWithImages(
-    String prompt,
-    List<LlamaImageContent> images,
-  ) {
-    throw UnsupportedError('Vision is not supported in the RAG pipeline.');
-  }
-
-  @override
-  Stream<StreamingChunk> sendPromptStreamWithImages(
-    String prompt,
-    List<LlamaImageContent> images,
-  ) {
-    throw UnsupportedError('Vision is not supported in the RAG pipeline.');
-  }
 }
 
 // ── LlamaRagCoordinator ───────────────────────────────────────────────────────

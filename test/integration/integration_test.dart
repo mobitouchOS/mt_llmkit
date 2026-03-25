@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:llmcpp/llmcpp.dart';
+import 'package:llmcpp/src/models/llm_model_base.dart';
+import 'package:llmcpp/src/models/llm_model_isolated.dart';
+import 'package:llmcpp/src/models/llm_model_standard.dart';
 
 void main() {
   group('Integration Tests - Complete Workflow', () {
