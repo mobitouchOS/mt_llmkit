@@ -81,6 +81,7 @@ class _RagPageState extends State<RagPage> {
   // ── State: pipeline ────────────────────────────────────────────────────
   RagEngine? _rag;
   bool get _pipelineReady => _rag?.isReady ?? false;
+  bool _hasIndexFile = false;
 
   // ── State: documents ───────────────────────────────────────────────────
   final List<_IndexedDoc> _indexedDocs = [];
@@ -119,6 +120,7 @@ class _RagPageState extends State<RagPage> {
     final dir = await getApplicationDocumentsDirectory();
     final genFile = File('${dir.path}/${_generationModel.filename}');
     final embedFile = File('${dir.path}/${_embeddingModel.filename}');
+    final indexFile = File('${dir.path}/rag_index.json');
 
     setState(() {
       if (genFile.existsSync()) {
@@ -129,7 +131,21 @@ class _RagPageState extends State<RagPage> {
         _embeddingModelPath = embedFile.path;
         _embeddingModelReady = true;
       }
+      _hasIndexFile = indexFile.existsSync();
     });
+  }
+
+  Future<void> _deleteIndexFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    final indexFile = File('${dir.path}/rag_index.json');
+    if (indexFile.existsSync()) {
+      await indexFile.delete();
+    }
+    setState(() {
+      _hasIndexFile = false;
+      _indexedDocs.clear();
+    });
+    _showSnack('Index file deleted');
   }
 
   // ── Model downloads ────────────────────────────────────────────────────
@@ -393,13 +409,13 @@ class _RagPageState extends State<RagPage> {
               });
 
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (_scrollController.hasClients) {
-                  _scrollController.animateTo(
-                    _scrollController.position.maxScrollExtent,
-                    duration: const Duration(milliseconds: 100),
-                    curve: Curves.easeOut,
-                  );
-                }
+                // if (_scrollController.hasClients) {
+                //   _scrollController.animateTo(
+                //     _scrollController.position.maxScrollExtent,
+                //     duration: const Duration(milliseconds: 100),
+                //     curve: Curves.easeOut,
+                //   );
+                // }
               });
             },
             onError: (Object error) {
@@ -470,10 +486,25 @@ class _RagPageState extends State<RagPage> {
             if (_generationModelReady &&
                 _embeddingModelReady &&
                 !_pipelineReady)
+              Column(
+                children: [
               ElevatedButton.icon(
                 onPressed: _initializePipeline,
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Initialize RAG Pipeline'),
+              ),
+                  if (_hasIndexFile) ...[
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: _deleteIndexFile,
+                      icon: const Icon(Icons.delete_forever, color: Colors.red),
+                      label: const Text(
+                        'Delete index',
+                        style: TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  ],
+                ],
               ),
 
             if (_pipelineReady)
@@ -846,7 +877,9 @@ class _SourceChip extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            result.chunk.preview,
+            result.chunk.text.length > 300
+                ? '${result.chunk.text.substring(0, 300)}…'
+                : result.chunk.text,
             style: const TextStyle(fontSize: 11),
             maxLines: 3,
             overflow: TextOverflow.ellipsis,

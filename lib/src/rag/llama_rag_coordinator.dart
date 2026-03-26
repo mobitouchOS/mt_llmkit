@@ -32,16 +32,15 @@ Future<void> _llamaRagWorkerMain(Map<String, dynamic> args) async {
   final int microBatchSize = args['microBatchSize'] as int;
   final int maxParallelSequences = args['maxParallelSequences'] as int;
   final String? chatTemplate = args['chatTemplate'] as String?;
-  final List<LoraAdapterConfig> loras =
-      (args['loras'] as List)
-          .cast<Map>()
-          .map(
-            (m) => LoraAdapterConfig(
-              path: m['path'] as String,
-              scale: (m['scale'] as num).toDouble(),
-            ),
-          )
-          .toList();
+  final List<LoraAdapterConfig> loras = (args['loras'] as List)
+      .cast<Map>()
+      .map(
+        (m) => LoraAdapterConfig(
+          path: m['path'] as String,
+          scale: (m['scale'] as num).toDouble(),
+        ),
+      )
+      .toList();
   final int maxTokens = args['maxTokens'] as int;
   final double temp = (args['temp'] as num).toDouble();
   final int topK = args['topK'] as int;
@@ -49,8 +48,8 @@ Future<void> _llamaRagWorkerMain(Map<String, dynamic> args) async {
   final double minP = (args['minP'] as num).toDouble();
   final double penalty = (args['penalty'] as num).toDouble();
   final int? seed = args['seed'] as int?;
-  final List<String> stopSequences =
-      (args['stopSequences'] as List).cast<String>();
+  final List<String> stopSequences = (args['stopSequences'] as List)
+      .cast<String>();
   final String? grammar = args['grammar'] as String?;
   final bool grammarLazy = args['grammarLazy'] as bool;
   final List<GenerationGrammarTrigger> grammarTriggers =
@@ -64,8 +63,8 @@ Future<void> _llamaRagWorkerMain(Map<String, dynamic> args) async {
             ),
           )
           .toList();
-  final List<String> preservedTokens =
-      (args['preservedTokens'] as List).cast<String>();
+  final List<String> preservedTokens = (args['preservedTokens'] as List)
+      .cast<String>();
   final String grammarRoot = args['grammarRoot'] as String;
   final bool reusePromptPrefix = args['reusePromptPrefix'] as bool;
   final int streamBatchTokenThreshold =
@@ -161,14 +160,14 @@ Future<void> _llamaRagWorkerMain(Map<String, dynamic> args) async {
         final prompt = message['prompt'] as String;
         final streamPort = message['streamPort'] as SendPort;
         genSubscription = genEngine
-            .create(
-              [LlamaChatMessage.fromText(role: LlamaChatRole.user, text: prompt)],
-              params: genParams,
-            )
+            .create([
+              LlamaChatMessage.fromText(role: LlamaChatRole.user, text: prompt),
+            ], params: genParams)
             .listen(
               (chunk) {
                 final text = chunk.choices.firstOrNull?.delta.content;
-                if (text != null) streamPort.send({'type': 'token', 'text': text});
+                if (text != null)
+                  streamPort.send({'type': 'token', 'text': text});
               },
               onDone: () {
                 streamPort.send({'type': 'done'});
@@ -203,7 +202,7 @@ class _CoordEmbeddingProvider implements EmbeddingProvider {
   bool _isInitialized = true;
 
   _CoordEmbeddingProvider(this._workerPort, {required int dimensions})
-      : _dimensions = dimensions;
+    : _dimensions = dimensions;
 
   @override
   Future<void> initialize(Map<String, dynamic> config) async {
@@ -251,7 +250,9 @@ class _CoordEmbeddingProvider implements EmbeddingProvider {
     if (text.length <= maxChars) return text;
     final truncated = text.substring(0, maxChars);
     final lastSpace = truncated.lastIndexOf(' ');
-    return lastSpace > maxChars * 0.8 ? truncated.substring(0, lastSpace) : truncated;
+    return lastSpace > maxChars * 0.8
+        ? truncated.substring(0, lastSpace)
+        : truncated;
   }
 }
 
@@ -298,7 +299,9 @@ class _CoordPlugin implements LlmInterface {
           replyPort.close();
           _isGenerating = false;
           if (!controller.isClosed) {
-            controller.addError(Exception('Generation error: ${message['message']}'));
+            controller.addError(
+              Exception('Generation error: ${message['message']}'),
+            );
           }
       }
     });
@@ -381,10 +384,16 @@ class LlamaRagCoordinator {
     int embedNCtx = 512,
   }) async {
     if (!File(embedModelPath).existsSync()) {
-      throw FileSystemException('Embedding model does not exist', embedModelPath);
+      throw FileSystemException(
+        'Embedding model does not exist',
+        embedModelPath,
+      );
     }
     if (!File(genModelPath).existsSync()) {
-      throw FileSystemException('Generation model does not exist', genModelPath);
+      throw FileSystemException(
+        'Generation model does not exist',
+        genModelPath,
+      );
     }
 
     final coordinator = LlamaRagCoordinator._();
@@ -400,50 +409,48 @@ class LlamaRagCoordinator {
   ) async {
     final initPort = ReceivePort();
 
-    _isolate = await Isolate.spawn(
-      _llamaRagWorkerMain,
-      {
-        'embedModelPath': embedModelPath,
-        'genModelPath': genModelPath,
-        'embedContextSize': embedNCtx,
-        'genContextSize': genConfig.nCtxDefault,
-        'batchSize': genConfig.nBatchDefault,
-        'numberOfThreads': genConfig.nThreadsDefault,
-        'numberOfThreadsBatch': genConfig.numberOfThreadsBatchDefault,
-        'microBatchSize': genConfig.microBatchSizeDefault,
-        'maxParallelSequences': genConfig.maxParallelSequencesDefault,
-        'chatTemplate': genConfig.chatTemplate,
-        'loras': genConfig.lorasDefault
-            .map((l) => {'path': l.path, 'scale': l.scale})
-            .toList(),
-        'maxTokens': genConfig.nPredictDefault,
-        'temp': genConfig.tempDefault,
-        'topK': genConfig.topKDefault,
-        'topP': genConfig.topPDefault,
-        'minP': genConfig.minPDefault,
-        'penalty': genConfig.penaltyRepeatDefault,
-        'seed': genConfig.seed,
-        'stopSequences': genConfig.stopSequencesDefault,
-        'grammar': genConfig.grammar,
-        'grammarLazy': genConfig.grammarLazyDefault,
-        'grammarTriggers': genConfig.grammarTriggersDefault
-            .map((t) => {
-                  'type': t.type,
-                  'value': t.value,
-                  if (t.token != null) 'token': t.token,
-                })
-            .toList(),
-        'preservedTokens': genConfig.preservedTokensDefault,
-        'grammarRoot': genConfig.grammarRootDefault,
-        'reusePromptPrefix': genConfig.reusePromptPrefixDefault,
-        'streamBatchTokenThreshold':
-            genConfig.streamBatchTokenThresholdDefault,
-        'streamBatchByteThreshold': genConfig.streamBatchByteThresholdDefault,
-        'gpuBackend': genConfig.gpuBackendDefault.name,
-        'sendPort': initPort.sendPort,
-      },
-      debugName: 'llmcpp_RagWorker',
-    );
+    _isolate = await Isolate.spawn(_llamaRagWorkerMain, {
+      'embedModelPath': embedModelPath,
+      'genModelPath': genModelPath,
+      'embedContextSize': embedNCtx,
+      'genContextSize': genConfig.nCtxDefault,
+      'batchSize': genConfig.nBatchDefault,
+      'numberOfThreads': genConfig.nThreadsDefault,
+      'numberOfThreadsBatch': genConfig.numberOfThreadsBatchDefault,
+      'microBatchSize': genConfig.microBatchSizeDefault,
+      'maxParallelSequences': genConfig.maxParallelSequencesDefault,
+      'chatTemplate': genConfig.chatTemplate,
+      'loras': genConfig.lorasDefault
+          .map((l) => {'path': l.path, 'scale': l.scale})
+          .toList(),
+      'maxTokens': genConfig.nPredictDefault,
+      'temp': genConfig.tempDefault,
+      'topK': genConfig.topKDefault,
+      'topP': genConfig.topPDefault,
+      'minP': genConfig.minPDefault,
+      'penalty': genConfig.penaltyRepeatDefault,
+      'seed': genConfig.seed,
+      'stopSequences': genConfig.stopSequencesDefault,
+      'grammar': genConfig.grammar,
+      'grammarLazy': genConfig.grammarLazyDefault,
+      'grammarTriggers': genConfig.grammarTriggersDefault
+          .map(
+            (t) => {
+              'type': t.type,
+              'value': t.value,
+              if (t.token != null) 'token': t.token,
+            },
+          )
+          .toList(),
+      'preservedTokens': genConfig.preservedTokensDefault,
+      'grammarRoot': genConfig.grammarRootDefault,
+      'reusePromptPrefix': genConfig.reusePromptPrefixDefault,
+      'genGpuLayers': genConfig.nGpuLayersDefault,
+      'streamBatchTokenThreshold': genConfig.streamBatchTokenThresholdDefault,
+      'streamBatchByteThreshold': genConfig.streamBatchByteThresholdDefault,
+      'gpuBackend': genConfig.gpuBackendDefault.name,
+      'sendPort': initPort.sendPort,
+    }, debugName: 'llmcpp_RagWorker');
 
     final initMsg = await initPort.first as Map<String, dynamic>;
     initPort.close();
@@ -461,7 +468,10 @@ class LlamaRagCoordinator {
     final tempProvider = _CoordEmbeddingProvider(_workerPort!, dimensions: 0);
     final probeVec = await tempProvider.embed('dim_probe');
 
-    _embeddingProvider = _CoordEmbeddingProvider(_workerPort!, dimensions: probeVec.length);
+    _embeddingProvider = _CoordEmbeddingProvider(
+      _workerPort!,
+      dimensions: probeVec.length,
+    );
     _generationPlugin = _CoordPlugin(_workerPort!);
   }
 
