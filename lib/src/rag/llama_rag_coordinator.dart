@@ -76,6 +76,7 @@ Future<void> _llamaRagWorkerMain(Map<String, dynamic> args) async {
     (e) => e.name == gpuBackendName,
     orElse: () => GpuBackend.auto,
   );
+  final int genGpuLayers = args['genGpuLayers'] as int;
   final SendPort mainPort = args['sendPort'] as SendPort;
 
   final embedEngine = LlamaEngine(LlamaBackend());
@@ -101,7 +102,7 @@ Future<void> _llamaRagWorkerMain(Map<String, dynamic> args) async {
       genModelPath,
       modelParams: ModelParams(
         contextSize: genContextSize,
-        gpuLayers: 0,
+        gpuLayers: genGpuLayers,
         batchSize: batchSize,
         numberOfThreads: numberOfThreads,
         numberOfThreadsBatch: numberOfThreadsBatch,
