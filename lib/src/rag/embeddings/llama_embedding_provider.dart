@@ -1,0 +1,215 @@
+// lib/src/rag/embeddings/llama_embedding_provider.dart
+
+import 'dart:async';
+import 'dart:io';
+import 'dart:isolate';
+
+import 'package:llamadart/llamadart.dart';
+
+import 'embedding_provider.dart';
+
+// ── Worker isolate entry point ─────────────────────────────────────────────
+
+Future<void> _llamaEmbedWorkerMain(Map<String, dynamic> args) async {
+  final String modelPath = args['modelPath'] as String;
+  final int contextSize = args['contextSize'] as int;
+  final int batchSize = args['batchSize'] as int;
+  final int numberOfThreads = args['numberOfThreads'] as int;
+  final SendPort mainPort = args['sendPort'] as SendPort;
+
+  final engine = LlamaEngine(LlamaBackend());
+  try {
+    await engine.loadModel(
+      modelPath,
+      modelParams: ModelParams(
+        contextSize: contextSize,
+        gpuLayers: 0,
+        batchSize: batchSize,
+        numberOfThreads: numberOfThreads,
+        preferredBackend: GpuBackend.cpu,
+      ),
+    );
+  } catch (e) {
+    mainPort.send({'type': 'error', 'message': '$e'});
+    return;
+  }
+
+  final receivePort = ReceivePort();
+  mainPort.send({'type': 'ready', 'port': receivePort.sendPort});
+
+  await for (final message in receivePort) {
+    if (message is! Map<String, dynamic>) continue;
+
+    switch (message['type'] as String?) {
+      case 'embed':
+        final text = message['text'] as String;
+        final replyPort = message['replyPort'] as SendPort;
+        try {
+          final embedding = await engine.embed(text);
+          replyPort.send({'type': 'ok', 'embedding': embedding});
+        } catch (e) {
+          replyPort.send({'type': 'error', 'message': '$e'});
+        }
+
+      case 'dispose':
+        await engine.dispose();
+        receivePort.close();
+        return;
+    }
+  }
+}
+
+// ── LlamaEmbeddingProvider ─────────────────────────────────────────────────
+
+/// Embedding provider that runs a GGUF embedding model in a dedicated isolate.
+///
+/// Unlike [LlamaRagCoordinator], each instance creates its own isolated worker
+/// so the embed and generation models never share an isolate boundary.
+///
+/// ## Usage
+///
+/// ```dart
+/// final provider = LlamaEmbeddingProvider(
+///   modelPath: '/path/to/nomic-embed-text.gguf',
+/// );
+/// await provider.load();
+///
+/// final vector = await provider.embed('What is the capital of Poland?');
+/// print('Dimensions: ${vector.length}');
+///
+/// await provider.dispose();
+/// ```
+class LlamaEmbeddingProvider implements EmbeddingProvider {
+  final String modelPath;
+
+  /// Context window for the embedding model (default 512 tokens).
+  final int embedNCtx;
+
+  /// Batch size for the embedding model (default 512).
+  final int batchSize;
+
+  /// Number of CPU threads for embedding inference (default 4).
+  final int numberOfThreads;
+
+  Isolate? _isolate;
+  SendPort? _workerPort;
+  int _dimensions = 0;
+  bool _isInitialized = false;
+
+  LlamaEmbeddingProvider({
+    required this.modelPath,
+    this.embedNCtx = 512,
+    this.batchSize = 512,
+    this.numberOfThreads = 4,
+  });
+
+  @override
+  bool get isInitialized => _isInitialized;
+
+  @override
+  int get dimensions => _dimensions;
+
+  /// Initializes from a config map (satisfies [EmbeddingProvider] contract).
+  ///
+  /// Delegates to [load]. The `config` map is ignored; use constructor
+  /// parameters instead.
+  @override
+  Future<void> initialize(Map<String, dynamic> config) => load();
+
+  /// Loads the embedding model in a dedicated worker isolate.
+  ///
+  /// Idempotent — subsequent calls are no-ops.
+  Future<void> load() async {
+    if (_isInitialized) return;
+
+    if (!File(modelPath).existsSync()) {
+      throw FileSystemException('Embedding model not found', modelPath);
+    }
+
+    final initPort = ReceivePort();
+    _isolate = await Isolate.spawn(
+      _llamaEmbedWorkerMain,
+      {
+        'modelPath': modelPath,
+        'contextSize': embedNCtx,
+        'batchSize': batchSize,
+        'numberOfThreads': numberOfThreads,
+        'sendPort': initPort.sendPort,
+      },
+      debugName: 'llmcpp_EmbedWorker',
+    );
+
+    final initMsg = await initPort.first as Map<String, dynamic>;
+    initPort.close();
+
+    if (initMsg['type'] == 'error') {
+      _isolate?.kill();
+      _isolate = null;
+      throw Exception(
+        'LlamaEmbeddingProvider init failed: ${initMsg['message']}',
+      );
+    }
+
+    _workerPort = initMsg['port'] as SendPort;
+
+    // Probe to discover embedding dimensions.
+    final probeVec = await embed('probe');
+    _dimensions = probeVec.length;
+    _isInitialized = true;
+  }
+
+  @override
+  Future<List<double>> embed(String text) async {
+    if (_workerPort == null) {
+      throw StateError(
+        'LlamaEmbeddingProvider is not initialized. Call load() first.',
+      );
+    }
+
+    final replyPort = ReceivePort();
+    _workerPort!.send({
+      'type': 'embed',
+      'text': _truncate(text),
+      'replyPort': replyPort.sendPort,
+    });
+
+    final response = await replyPort.first as Map<String, dynamic>;
+    replyPort.close();
+
+    if (response['type'] == 'error') {
+      throw Exception('Embedding error: ${response['message']}');
+    }
+
+    final raw = response['embedding'] as List;
+    return raw.map((e) => (e as num).toDouble()).toList();
+  }
+
+  @override
+  Future<List<List<double>>> embedBatch(List<String> texts) async {
+    final results = <List<double>>[];
+    for (final text in texts) {
+      results.add(await embed(text));
+    }
+    return results;
+  }
+
+  @override
+  Future<void> dispose() async {
+    _workerPort?.send({'type': 'dispose'});
+    await Future.delayed(const Duration(milliseconds: 200));
+    _isolate?.kill(priority: Isolate.beforeNextEvent);
+    _isolate = null;
+    _workerPort = null;
+    _isInitialized = false;
+    _dimensions = 0;
+  }
+
+  String _truncate(String text, {int maxChars = 2000}) {
+    if (text.length <= maxChars) return text;
+    final truncated = text.substring(0, maxChars);
+    final lastSpace = truncated.lastIndexOf(' ');
+    return lastSpace > maxChars * 0.8
+        ? truncated.substring(0, lastSpace)
+        : truncated;
+  }
+}
