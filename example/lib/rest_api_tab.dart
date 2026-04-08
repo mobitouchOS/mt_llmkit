@@ -3,7 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:llmcpp/llmcpp.dart';
+import 'package:mt_llmkit/llmcpp.dart';
 
 /// Self-contained tab for interacting with cloud AI providers via REST API.
 ///
@@ -108,37 +108,39 @@ class _RestApiTabState extends State<RestApiTab> {
       _statusMessage = 'Generating…';
     });
 
-    _streamSub = _provider!.sendMessageStream(prompt).listen(
-      (token) {
-        setState(() {
-          _outputBuffer.write(token);
-          _output = _outputBuffer.toString();
-        });
-        // Auto-scroll to bottom as tokens arrive.
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollController.jumpTo(
-              _scrollController.position.maxScrollExtent,
-            );
-          }
-        });
-      },
-      onError: (Object error) {
-        if (!mounted) return;
-        setState(() {
-          _isGenerating = false;
-          _statusMessage = 'Error';
-        });
-        _showError('$error');
-      },
-      onDone: () {
-        if (!mounted) return;
-        setState(() {
-          _isGenerating = false;
-          _statusMessage = 'Done';
-        });
-      },
-    );
+    _streamSub = _provider!
+        .sendMessageStream(prompt)
+        .listen(
+          (token) {
+            setState(() {
+              _outputBuffer.write(token);
+              _output = _outputBuffer.toString();
+            });
+            // Auto-scroll to bottom as tokens arrive.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (_scrollController.hasClients) {
+                _scrollController.jumpTo(
+                  _scrollController.position.maxScrollExtent,
+                );
+              }
+            });
+          },
+          onError: (Object error) {
+            if (!mounted) return;
+            setState(() {
+              _isGenerating = false;
+              _statusMessage = 'Error';
+            });
+            _showError('$error');
+          },
+          onDone: () {
+            if (!mounted) return;
+            setState(() {
+              _isGenerating = false;
+              _statusMessage = 'Done';
+            });
+          },
+        );
   }
 
   Future<void> _stop() async {
@@ -155,10 +157,7 @@ class _RestApiTabState extends State<RestApiTab> {
   void _showError(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red.shade700,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.red.shade700),
     );
   }
 
@@ -183,8 +182,10 @@ class _RestApiTabState extends State<RestApiTab> {
                   labelText: 'Provider',
                   prefixIcon: Icon(Icons.cloud_outlined),
                   border: OutlineInputBorder(),
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 14,
+                  ),
                 ),
                 items: AIChatProviderType.values
                     .map(

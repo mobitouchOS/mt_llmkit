@@ -4,7 +4,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:llmcpp/llmcpp.dart';
+import 'package:mt_llmkit/llmcpp.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'rag_page.dart';

@@ -1,7 +1,7 @@
 // test/src/api/chat_models_test.dart
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:llmcpp/src/api/chat_models.dart';
+import 'package:mt_llmkit/src/api/chat_models.dart';
 
 void main() {
   group('ChatMessage', () {

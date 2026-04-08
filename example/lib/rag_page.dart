@@ -14,7 +14,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:llmcpp/llmcpp.dart';
+import 'package:mt_llmkit/llmcpp.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
 
@@ -488,11 +488,11 @@ class _RagPageState extends State<RagPage> {
                 !_pipelineReady)
               Column(
                 children: [
-              ElevatedButton.icon(
-                onPressed: _initializePipeline,
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Initialize RAG Pipeline'),
-              ),
+                  ElevatedButton.icon(
+                    onPressed: _initializePipeline,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Initialize RAG Pipeline'),
+                  ),
                   if (_hasIndexFile) ...[
                     const SizedBox(width: 8),
                     OutlinedButton.icon(

@@ -1,4 +1,4 @@
-name: llmcpp_example
+name: mt_llmkit_example
 description: "Demonstrates how to use the llmcpp plugin."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -19,22 +19,15 @@ dependencies:
 
   path_provider: ^2.1.5
 
-  llmcpp:
-    # When depending on this package from a real application you should use:
-    #   llmcpp: ^x.y.z
-    # See https://dart.dev/tools/pub/dependencies#version-constraints
-    # The example app is bundled with the plugin so we use a path dependency on
-    # the parent directory to use the current plugin's version.
+  mt_llmkit:
     path: ../
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
-  # RAG: wybór pliku (PDF, TXT) z systemu plików
   file_picker: ^8.1.2
 
-  # RAG: ekstrakcja tekstu z plików PDF (bezpłatna licencja community)
   read_pdf_text: ^0.3.1
 
 dev_dependencies:

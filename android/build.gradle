@@ -1,4 +1,4 @@
-group = "net.mobitouch.llmcpp.llmcpp"
+group = "net.mobitouch.llmkit"
 version = "1.0-SNAPSHOT"
 
 buildscript {
@@ -25,7 +25,7 @@ apply plugin: "com.android.library"
 apply plugin: "kotlin-android"
 
 android {
-    namespace = "net.mobitouch.llmcpp.llmcpp"
+    namespace = "net.mobitouch.llmkit"
 
     compileSdk = 36
 

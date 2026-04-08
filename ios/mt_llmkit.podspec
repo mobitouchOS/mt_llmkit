@@ -3,15 +3,15 @@
 # Run `pod lib lint llmcpp.podspec` to validate before publishing.
 #
 Pod::Spec.new do |s|
-  s.name             = 'llmcpp'
+  s.name             = 'mt_llmkit'
   s.version          = '0.0.1'
-  s.summary          = 'A new Flutter project.'
+  s.summary          = 'Run Large Language Models locally on iOS with Flutter.'
   s.description      = <<-DESC
-A new Flutter project.
+mt_llmkit enables running Large Language Models locally on iOS using llama.cpp. This package provides real-time streaming inference, performance metrics, cloud AI chat providers, and a fully local RAG pipeline — all from Flutter.
                        DESC
-  s.homepage         = 'http://example.com'
+  s.homepage         = 'https://github.com/mobitouchOS/mt_llmkit'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = { 'Mobitouch' => 'mobitouch.net@gmail.com' }
   s.source           = { :path => '.' }
   s.source_files = 'Classes/**/*'
   s.dependency 'Flutter'

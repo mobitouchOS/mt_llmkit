@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:llmcpp/llmcpp.dart';
+import 'package:mt_llmkit/llmcpp.dart';
 
 void main() {
   group('llmcpp package exports', () {

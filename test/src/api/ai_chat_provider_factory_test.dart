@@ -1,12 +1,12 @@
 // test/src/api/ai_chat_provider_factory_test.dart
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:llmcpp/src/api/ai_chat_provider.dart';
-import 'package:llmcpp/src/api/ai_chat_provider_factory.dart';
-import 'package:llmcpp/src/api/claude_chat_provider.dart';
-import 'package:llmcpp/src/api/gemini_chat_provider.dart';
-import 'package:llmcpp/src/api/mistral_chat_provider.dart';
-import 'package:llmcpp/src/api/openai_chat_provider.dart';
+import 'package:mt_llmkit/src/api/ai_chat_provider.dart';
+import 'package:mt_llmkit/src/api/ai_chat_provider_factory.dart';
+import 'package:mt_llmkit/src/api/claude_chat_provider.dart';
+import 'package:mt_llmkit/src/api/gemini_chat_provider.dart';
+import 'package:mt_llmkit/src/api/mistral_chat_provider.dart';
+import 'package:mt_llmkit/src/api/openai_chat_provider.dart';
 
 void main() {
   // ── Factory.create ─────────────────────────────────────────────────────────

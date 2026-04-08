@@ -227,17 +227,10 @@ packages:
     dependency: transitive
     description:
       name: llamadart
-      sha256: "1fa139d41173d64123e3bfea7b32768a5667c88bfab39b49046b074bb52c92a3"
+      sha256: ae138f7cd8ae8f0fcadf0150e207145222c01b3b9da4f967215a9652a4fc8012
       url: "https://pub.dev"
     source: hosted
-    version: "0.6.8"
-  llmcpp:
-    dependency: "direct main"
-    description:
-      path: ".."
-      relative: true
-    source: path
-    version: "0.0.1"
+    version: "0.6.10"
   logging:
     dependency: transitive
     description:
@@ -270,6 +263,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.17.0"
+  mt_llmkit:
+    dependency: "direct main"
+    description:
+      path: ".."
+      relative: true
+    source: path
+    version: "0.0.1-beta.1"
   path:
     dependency: transitive
     description:

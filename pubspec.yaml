@@ -50,7 +50,7 @@ flutter:
   plugin:
     platforms:
       android:
-        package: net.mobitouch.llmcpp.llmcpp
+        package: net.mobitouch.llmkit
         pluginClass: LlmcppPlugin
       ios:
         pluginClass: LlmcppPlugin

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:llmcpp/llmcpp.dart';
-import 'package:llmcpp/src/models/llm_model_base.dart';
+import 'package:mt_llmkit/llmcpp.dart';
+import 'package:mt_llmkit/src/models/llm_model_base.dart';
 
 /// Mock implementation for testing purposes
 class MockLlmModel extends LlmModelBase {

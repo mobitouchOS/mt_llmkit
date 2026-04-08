@@ -1,170 +1,81 @@
-// Tests for application state management
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:llmcpp_example/main.dart';
+import 'package:mt_llmkit_example/main.dart';
 
 void main() {
   group('App State Tests', () {
-    testWidgets('Initial state should show download UI', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('Initial tab is LLM (index 0)', (tester) async {
       await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      // Model is not downloaded, so download button should be visible
-      expect(find.text('Download Model'), findsOneWidget);
-      expect(find.byType(ElevatedButton), findsOneWidget);
-
-      // Chat UI should not be visible
-      expect(find.byType(TextField), findsNothing);
-      expect(find.byType(FloatingActionButton), findsNothing);
+      expect(find.text('llmcpp — LLM Demo'), findsOneWidget);
+      expect(find.text('Local GGUF'), findsOneWidget);
     });
 
-    testWidgets('Download button should have proper callback', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('Switching to Vision tab updates state', (tester) async {
       await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      final elevatedButton = tester.widget<ElevatedButton>(
-        find.byType(ElevatedButton),
-      );
-      expect(elevatedButton.onPressed, isNotNull);
+      await tester.tap(find.text('Vision'));
+      await tester.pumpAndSettle();
+      expect(find.text('llmcpp — Vision Demo'), findsOneWidget);
+      expect(find.text('llmcpp — LLM Demo'), findsNothing);
     });
 
-    testWidgets('App should have proper theme colors', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('Switching to RAG tab updates state', (tester) async {
       await tester.pumpWidget(const MyApp());
-
-      final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
-      expect(materialApp, isNotNull);
-
-      final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
-      expect(scaffold, isNotNull);
+      await tester.tap(find.text('RAG'));
+      await tester.pumpAndSettle();
+      expect(find.text('llmcpp — RAG Demo'), findsOneWidget);
+      expect(find.text('llmcpp — LLM Demo'), findsNothing);
     });
 
-    testWidgets('AppBar title should be "Example"', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('Tab navigation is persistent across switches', (tester) async {
       await tester.pumpWidget(const MyApp());
-
-      final appBar = tester.widget<AppBar>(find.byType(AppBar));
-      final title = appBar.title as Text;
-      expect(title.data, 'Example');
-    });
-
-    testWidgets('Center widget should wrap main content', (
-      WidgetTester tester,
-    ) async {
-      await tester.pumpWidget(const MyApp());
-
-      expect(find.byType(Center), findsOneWidget);
-
-      // Check hierarchy
-      final center = tester.widget<Center>(find.byType(Center));
-      expect(center.child, isA<Column>());
-    });
-
-    testWidgets('Column should have proper mainAxisAlignment', (
-      WidgetTester tester,
-    ) async {
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      // Check if Column is properly configured
-      expect(find.byType(Column), findsWidgets);
+      await tester.tap(find.text('Vision'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('RAG'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('LLM'));
+      await tester.pumpAndSettle();
+      expect(find.text('llmcpp — LLM Demo'), findsOneWidget);
     });
   });
 
   group('App Lifecycle Tests', () {
-    testWidgets('App should dispose cleanly', (WidgetTester tester) async {
+    testWidgets('App disposes cleanly', (tester) async {
       await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      // Build widget
       expect(find.byType(MyApp), findsOneWidget);
-
-      // Remove widget - this should trigger dispose
       await tester.pumpWidget(Container());
       await tester.pumpAndSettle();
-
-      // Widget should no longer exist
       expect(find.byType(MyApp), findsNothing);
     });
 
-    testWidgets('Multiple app instances should work', (
-      WidgetTester tester,
-    ) async {
-      // First instance
+    testWidgets('App rebuilds correctly after replace', (tester) async {
       await tester.pumpWidget(const MyApp());
-      await tester.pump();
-      expect(find.byType(MyApp), findsOneWidget);
-
-      // Replace with new instance
       await tester.pumpWidget(const MyApp());
       await tester.pump();
       expect(find.byType(MyApp), findsOneWidget);
     });
   });
 
-  group('UI Element Visibility Tests', () {
-    testWidgets('Download section should have proper structure', (
-      WidgetTester tester,
+  group('LLM Page State Tests', () {
+    testWidgets('Download button visible in initial GGUF state', (
+      tester,
     ) async {
       await tester.pumpWidget(const MyApp());
       await tester.pump();
-
-      // Download button should be inside Column
-      expect(
-        find.descendant(
-          of: find.byType(Column),
-          matching: find.text('Download Model'),
-        ),
-        findsOneWidget,
-      );
+      expect(find.text('Download GGUF model (~800MB)'), findsOneWidget);
     });
 
-    testWidgets('Scaffold should contain all main components', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('No TextField visible before model is ready', (tester) async {
       await tester.pumpWidget(const MyApp());
-
-      // AppBar in Scaffold
-      expect(
-        find.descendant(
-          of: find.byType(Scaffold),
-          matching: find.byType(AppBar),
-        ),
-        findsOneWidget,
-      );
-
-      // Body in Scaffold
-      final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
-      expect(scaffold.body, isNotNull);
+      await tester.pump();
+      expect(find.byType(TextField), findsNothing);
     });
-  });
 
-  group('Widget Properties Tests', () {
-    testWidgets('ElevatedButton should be interactive', (
-      WidgetTester tester,
+    testWidgets('No LinearProgressIndicator visible before download starts', (
+      tester,
     ) async {
       await tester.pumpWidget(const MyApp());
       await tester.pump();
-
-      final button = tester.widget<ElevatedButton>(find.byType(ElevatedButton));
-      expect(button.enabled, isTrue);
-      expect(button.onPressed, isNotNull);
-    });
-
-    testWidgets('Text widgets should have correct content', (
-      WidgetTester tester,
-    ) async {
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      expect(find.text('Example'), findsOneWidget);
-      expect(find.text('Download Model'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
     });
   });
 }

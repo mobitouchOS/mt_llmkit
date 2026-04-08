@@ -12,7 +12,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:llmcpp/llmcpp.dart';
+import 'package:mt_llmkit/llmcpp.dart';
 import 'package:path_provider/path_provider.dart';
 
 // ── Model download specs ───────────────────────────────────────────────────

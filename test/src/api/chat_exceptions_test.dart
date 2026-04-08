@@ -1,7 +1,7 @@
 // test/src/api/chat_exceptions_test.dart
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:llmcpp/src/api/chat_exceptions.dart';
+import 'package:mt_llmkit/src/api/chat_exceptions.dart';
 
 void main() {
   group('AIChatException', () {

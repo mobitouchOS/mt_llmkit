@@ -1,155 +1,74 @@
-// Tests for performance metrics UI functionality
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:llmcpp_example/main.dart';
+import 'package:mt_llmkit_example/main.dart';
 
 void main() {
   group('Performance Metrics UI Tests', () {
-    testWidgets('Should show performance metrics toggle when model loaded', (
-      WidgetTester tester,
+    testWidgets('No metrics text visible initially', (tester) async {
+      await tester.pumpWidget(const MyApp());
+      await tester.pump();
+      // Metrics row only appears after a generation completes
+      expect(find.textContaining('t/s'), findsNothing);
+      expect(find.textContaining('ms/token'), findsNothing);
+    });
+
+    testWidgets('No CircularProgressIndicator before generation starts', (
+      tester,
     ) async {
       await tester.pumpWidget(const MyApp());
       await tester.pump();
-
-      // Initially, the switch should not be visible (model not downloaded)
-      expect(find.byType(Switch), findsNothing);
-      expect(find.text('Show Performance Metrics'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
     });
 
-    testWidgets('Switch should be toggleable', (WidgetTester tester) async {
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      // The app starts without model, so no switch yet
-      expect(find.byType(Switch), findsNothing);
-    });
-
-    testWidgets('Performance metrics text should not show initially', (
-      WidgetTester tester,
+    testWidgets('No LinearProgressIndicator before download starts', (
+      tester,
     ) async {
       await tester.pumpWidget(const MyApp());
       await tester.pump();
-
-      expect(find.text('Performance Metrics'), findsNothing);
-      expect(find.text('Tokens Generated:'), findsNothing);
-      expect(find.text('Speed:'), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
     });
 
-    testWidgets('Should have proper widget structure', (
-      WidgetTester tester,
+    testWidgets('Send button not visible when model is not ready', (
+      tester,
     ) async {
       await tester.pumpWidget(const MyApp());
       await tester.pump();
-
-      // Basic structure should be present
-      expect(find.byType(MaterialApp), findsOneWidget);
-      expect(find.byType(Scaffold), findsOneWidget);
-      expect(find.byType(Column), findsWidgets);
+      expect(find.byIcon(Icons.send), findsNothing);
     });
 
-    testWidgets('FloatingActionButton should exist when model is loaded', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('Stop button not visible initially', (tester) async {
       await tester.pumpWidget(const MyApp());
       await tester.pump();
-
-      // Initially no FAB (model not loaded)
-      expect(find.byType(FloatingActionButton), findsNothing);
-    });
-
-    testWidgets('TextField should have correct hint text', (
-      WidgetTester tester,
-    ) async {
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      // TextField not visible initially
-      expect(find.byType(TextField), findsNothing);
-    });
-
-    testWidgets('Performance metrics container should have proper styling', (
-      WidgetTester tester,
-    ) async {
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      // Container with metrics not visible initially
-      expect(
-        find.byWidgetPredicate(
-          (widget) =>
-              widget is Container &&
-              widget.decoration is BoxDecoration &&
-              (widget.decoration as BoxDecoration).borderRadius != null,
-        ),
-        findsNothing,
-      );
-    });
-
-    testWidgets('Should display initial text', (WidgetTester tester) async {
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      // Initial text not visible when model is not downloaded
-      expect(find.text('Initial text'), findsNothing);
-    });
-
-    testWidgets('Download progress should not show initially', (
-      WidgetTester tester,
-    ) async {
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      expect(find.text('Downloading model...'), findsNothing);
-      expect(
-        find.byWidgetPredicate(
-          (widget) =>
-              widget is CircularProgressIndicator && widget.value != null,
-        ),
-        findsNothing,
-      );
-    });
-
-    testWidgets('App should have proper AppBar', (WidgetTester tester) async {
-      await tester.pumpWidget(const MyApp());
-
-      expect(find.byType(AppBar), findsOneWidget);
-      expect(find.text('Example'), findsOneWidget);
+      expect(find.byIcon(Icons.stop_circle_outlined), findsNothing);
     });
   });
 
-  group('Performance Metrics Integration', () {
-    testWidgets('App should maintain state correctly', (
-      WidgetTester tester,
-    ) async {
+  group('Provider Selector Tests', () {
+    testWidgets('SegmentedButton with Local GGUF and Rest API', (tester) async {
       await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      // Verify initial state
-      expect(find.byType(MyApp), findsOneWidget);
-      expect(find.text('Download Model'), findsOneWidget);
+      expect(find.text('Local GGUF'), findsOneWidget);
+      expect(find.text('Rest API'), findsOneWidget);
     });
 
-    testWidgets('Should handle widget disposal correctly', (
-      WidgetTester tester,
-    ) async {
+    testWidgets('Switching to Rest API hides download button', (tester) async {
       await tester.pumpWidget(const MyApp());
       await tester.pump();
+      expect(find.text('Download GGUF model (~800MB)'), findsOneWidget);
 
-      // Remove widget
-      await tester.pumpWidget(Container());
+      await tester.tap(find.text('Rest API'));
       await tester.pumpAndSettle();
-
-      // Widget should be gone
-      expect(find.byType(MyApp), findsNothing);
+      expect(find.text('Download GGUF model (~800MB)'), findsNothing);
     });
 
-    testWidgets('Multiple widgets should work', (WidgetTester tester) async {
+    testWidgets('Switching back to Local GGUF restores download button', (
+      tester,
+    ) async {
       await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      // Verify Column exists
-      expect(find.byType(Column), findsWidgets);
-      expect(find.byType(Center), findsOneWidget);
+      await tester.tap(find.text('Rest API'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Local GGUF'));
+      await tester.pumpAndSettle();
+      expect(find.text('Download GGUF model (~800MB)'), findsOneWidget);
     });
   });
 }
