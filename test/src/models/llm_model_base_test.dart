@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mt_llmkit/llmcpp.dart';
+import 'package:mt_llmkit/mt_llmkit.dart';
 import 'package:mt_llmkit/src/models/llm_model_base.dart';
 
 /// Mock implementation for testing purposes

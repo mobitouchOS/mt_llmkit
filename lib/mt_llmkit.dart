@@ -1,4 +1,4 @@
-// lib/llmcpp.dart
+// lib/mt_llmkit.dart
 
 // ── llamadart re-exports ──────────────────────────────────────────────────────
 export 'package:llamadart/llamadart.dart'
