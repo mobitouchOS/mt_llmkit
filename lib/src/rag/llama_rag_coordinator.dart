@@ -166,8 +166,9 @@ Future<void> _llamaRagWorkerMain(Map<String, dynamic> args) async {
             .listen(
               (chunk) {
                 final text = chunk.choices.firstOrNull?.delta.content;
-                if (text != null)
+                if (text != null) {
                   streamPort.send({'type': 'token', 'text': text});
+                }
               },
               onDone: () {
                 streamPort.send({'type': 'done'});
