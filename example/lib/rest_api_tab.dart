@@ -3,7 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:mt_llmkit/llmcpp.dart';
+import 'package:mt_llmkit/mt_llmkit.dart';
 
 /// Self-contained tab for interacting with cloud AI providers via REST API.
 ///

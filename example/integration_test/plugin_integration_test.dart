@@ -9,7 +9,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:mt_llmkit/llmcpp.dart';
+import 'package:mt_llmkit/mt_llmkit.dart';
 import 'package:mt_llmkit/src/models/llm_model_isolated.dart';
 import 'package:mt_llmkit/src/models/llm_model_standard.dart';
 import 'package:mt_llmkit_example/main.dart';

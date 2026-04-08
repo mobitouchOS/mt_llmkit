@@ -1,6 +1,6 @@
 // Tests for PerformanceMetrics class
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mt_llmkit/llmcpp.dart';
+import 'package:mt_llmkit/mt_llmkit.dart';
 
 void main() {
   group('PerformanceMetrics', () {
