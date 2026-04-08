@@ -1,8 +1,15 @@
-name: llmcpp
-description: "A new Flutter project."
-version: 0.0.1
-publish_to: none
-homepage: none
+name: mt_llmkit
+version: 0.0.1-beta.1
+description: A Flutter plugin for running Large Language Models locally on Android and iOS via llama.cpp, with real-time streaming inference and performance metrics.
+homepage: https://github.com/mobitouchOS/mt_llmkit
+repository: https://github.com/mobitouchOS/mt_llmkit
+issue_tracker: https://github.com/mobitouchOS/mt_llmkit/issues
+topics:
+  - llm
+  - llama-cpp
+  - ai
+  - on-device-ai
+  - flutter-plugin
 
 environment:
   sdk: '>=3.10.7 <4.0.0'
@@ -47,9 +54,9 @@ flutter:
         pluginClass: LlmcppPlugin
       ios:
         pluginClass: LlmcppPlugin
-      web:
-        pluginClass: LlmcppWeb
-        fileName: llmcpp_web.dart
+      # web:
+      #   pluginClass: LlmcppWeb
+      #   fileName: llmcpp_web.dart
 
   # To add assets to your plugin package, add an assets section, like this:
   # assets:
