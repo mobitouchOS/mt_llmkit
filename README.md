@@ -1,6 +1,12 @@
-# llmcpp
+# mt_llmkit
 
-A Flutter plugin for running Large Language Models (LLMs) locally on Android and iOS using [llama.cpp](https://github.com/ggerganov/llama.cpp) via FFI. Also provides a unified interface for cloud AI chat providers (OpenAI, Gemini, Claude, Mistral) and a fully local RAG (Retrieval-Augmented Generation) pipeline.
+![Flutter](https://img.shields.io/badge/Flutter-%3E%3D3.32-02569B?logo=flutter)
+![Dart](https://img.shields.io/badge/Dart-%5E3.8-0175C2?logo=dart)
+![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey)
+![Stability](https://img.shields.io/badge/stability-beta-orange)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+A Flutter plugin for running Large Language Models (LLMs) locally on Android and iOS using [llamadart](https://pub.dev/packages/llamadart) (which wraps llama.cpp). Also provides a unified interface for cloud AI chat providers (OpenAI, Gemini, Claude, Mistral) and a fully local RAG (Retrieval-Augmented Generation) pipeline.
 
 ---
 
@@ -42,7 +48,7 @@ Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  llmcpp: ^1.0.0
+  mt_llmkit: ^0.0.1-beta.1
 ```
 
 Then run:
@@ -54,7 +60,7 @@ flutter pub get
 Import the library:
 
 ```dart
-import 'package:llmcpp/llmcpp.dart';
+import 'package:mt_llmkit/llmcpp.dart';
 ```
 
 ---
@@ -267,7 +273,7 @@ print(response);
 
 ## Cloud API Providers
 
-`llmcpp` includes a unified `AIChatProvider` interface for four cloud LLM providers. All providers share the same API surface, making it easy to swap backends.
+`mt_llmkit` includes a unified `AIChatProvider` interface for four cloud LLM providers. All providers share the same API surface, making it easy to swap backends.
 
 ### Supported providers
 
@@ -435,7 +441,7 @@ Ingestion:  Document → TextChunker → chunks → EmbeddingModel → VectorSto
 Query:      question → EmbeddingModel → VectorStore.search() → prompt + context → GenerationModel
 ```
 
-Both the embedding model and the generation model run inside a **single worker isolate**, avoiding the native callback crash caused by llama.cpp's global log pointer.
+Both the embedding model and the generation model run inside a **single worker isolate**, avoiding threading issues that arise when multiple native model instances share global state — this is handled transparently by llamadart.
 
 ### Quick start
 
