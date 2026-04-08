@@ -112,9 +112,7 @@ abstract class BaseAIChatProvider implements AIChatProvider {
       throw StateError('Provider has been disposed.');
     }
     if (!_isInitialized) {
-      throw StateError(
-        'Provider is not initialised. Call initialize() first.',
-      );
+      throw StateError('Provider is not initialised. Call initialize() first.');
     }
   }
 
@@ -122,10 +120,7 @@ abstract class BaseAIChatProvider implements AIChatProvider {
   ///
   /// Only [NetworkException] and [RateLimitException] trigger a retry;
   /// all other exceptions propagate immediately without retry.
-  Future<T> withRetry<T>(
-    Future<T> Function() fn, {
-    int maxAttempts = 3,
-  }) async {
+  Future<T> withRetry<T>(Future<T> Function() fn, {int maxAttempts = 3}) async {
     int attempt = 0;
     Duration delay = const Duration(seconds: 1);
     while (true) {
@@ -166,13 +161,13 @@ abstract class BaseAIChatProvider implements AIChatProvider {
   AIChatException mapHttpError(int statusCode, String body) {
     return switch (statusCode) {
       401 || 403 => APIKeyException(
-          'Authentication failed: $body',
-          statusCode: statusCode,
-        ),
+        'Authentication failed: $body',
+        statusCode: statusCode,
+      ),
       429 => RateLimitException(
-          'Rate limit exceeded: $body',
-          retryAfter: _parseRetryAfter(body),
-        ),
+        'Rate limit exceeded: $body',
+        retryAfter: _parseRetryAfter(body),
+      ),
       _ => AIChatException('API error: $body', statusCode: statusCode),
     };
   }

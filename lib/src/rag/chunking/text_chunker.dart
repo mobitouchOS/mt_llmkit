@@ -43,9 +43,9 @@ class TextChunker {
     this.chunkOverlap = 100,
     this.minChunkSize = 50,
   }) : assert(
-          chunkOverlap < chunkSize,
-          'chunkOverlap must be less than chunkSize',
-        );
+         chunkOverlap < chunkSize,
+         'chunkOverlap must be less than chunkSize',
+       );
 
   /// Splits [document] into a list of [DocumentChunk].
   ///
@@ -69,18 +69,20 @@ class TextChunker {
       final chunkText = text.substring(start, end).trim();
 
       if (chunkText.length >= minChunkSize) {
-        chunks.add(DocumentChunk(
-          id: '${document.id}_chunk_$chunkIndex',
-          documentId: document.id,
-          text: chunkText,
-          chunkIndex: chunkIndex,
-          startChar: start,
-          endChar: end,
-          metadata: {
-            'documentTitle': document.title,
-            'documentSource': document.source,
-          },
-        ));
+        chunks.add(
+          DocumentChunk(
+            id: '${document.id}_chunk_$chunkIndex',
+            documentId: document.id,
+            text: chunkText,
+            chunkIndex: chunkIndex,
+            startChar: start,
+            endChar: end,
+            metadata: {
+              'documentTitle': document.title,
+              'documentSource': document.source,
+            },
+          ),
+        );
         chunkIndex++;
       }
 

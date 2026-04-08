@@ -30,8 +30,8 @@ class Document {
     required this.content,
     Map<String, dynamic>? metadata,
     DateTime? createdAt,
-  })  : metadata = metadata ?? {},
-        createdAt = createdAt ?? DateTime.now();
+  }) : metadata = metadata ?? {},
+       createdAt = createdAt ?? DateTime.now();
 
   // ── Factory constructors ─────────────────────────────────────────────────
 
@@ -98,20 +98,20 @@ class Document {
   // ── Serialization ────────────────────────────────────────────────────────
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'source': source,
-        'content': content,
-        'metadata': metadata,
-        'createdAt': createdAt.toIso8601String(),
-      };
+    'id': id,
+    'source': source,
+    'content': content,
+    'metadata': metadata,
+    'createdAt': createdAt.toIso8601String(),
+  };
 
   factory Document.fromJson(Map<String, dynamic> json) => Document(
-        id: json['id'] as String,
-        source: json['source'] as String,
-        content: json['content'] as String,
-        metadata: (json['metadata'] as Map<String, dynamic>?) ?? {},
-        createdAt: DateTime.parse(json['createdAt'] as String),
-      );
+    id: json['id'] as String,
+    source: json['source'] as String,
+    content: json['content'] as String,
+    metadata: (json['metadata'] as Map<String, dynamic>?) ?? {},
+    createdAt: DateTime.parse(json['createdAt'] as String),
+  );
 
   @override
   String toString() =>

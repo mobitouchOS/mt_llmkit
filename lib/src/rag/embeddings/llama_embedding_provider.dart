@@ -127,17 +127,13 @@ class LlamaEmbeddingProvider implements EmbeddingProvider {
     }
 
     final initPort = ReceivePort();
-    _isolate = await Isolate.spawn(
-      _llamaEmbedWorkerMain,
-      {
-        'modelPath': modelPath,
-        'contextSize': embedNCtx,
-        'batchSize': batchSize,
-        'numberOfThreads': numberOfThreads,
-        'sendPort': initPort.sendPort,
-      },
-      debugName: 'llmcpp_EmbedWorker',
-    );
+    _isolate = await Isolate.spawn(_llamaEmbedWorkerMain, {
+      'modelPath': modelPath,
+      'contextSize': embedNCtx,
+      'batchSize': batchSize,
+      'numberOfThreads': numberOfThreads,
+      'sendPort': initPort.sendPort,
+    }, debugName: 'llmcpp_EmbedWorker');
 
     final initMsg = await initPort.first as Map<String, dynamic>;
     initPort.close();

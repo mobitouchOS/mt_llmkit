@@ -31,8 +31,7 @@ class RagIngestionProgress {
   });
 
   /// Completion fraction (0.0–1.0)
-  double get fraction =>
-      totalChunks > 0 ? embeddedChunks / totalChunks : 0.0;
+  double get fraction => totalChunks > 0 ? embeddedChunks / totalChunks : 0.0;
 
   @override
   String toString() =>
@@ -110,8 +109,8 @@ class RagPipeline {
     required this.generationPlugin,
     TextChunker? chunker,
     String? promptTemplate,
-  })  : chunker = chunker ?? const TextChunker(),
-        promptTemplate = promptTemplate ?? defaultPromptTemplate;
+  }) : chunker = chunker ?? const TextChunker(),
+       promptTemplate = promptTemplate ?? defaultPromptTemplate;
 
   // ── Ingestion ─────────────────────────────────────────────────────────────
 
@@ -216,10 +215,13 @@ class RagPipeline {
     }
 
     // Step 3: build prompt with context
-    final contextParts = results.map((r) {
-      final source = r.chunk.metadata['documentTitle'] ?? r.chunk.documentId;
-      return '[$source, similarity: ${(r.similarity * 100).toStringAsFixed(0)}%]\n${r.chunk.text}';
-    }).join('\n\n---\n\n');
+    final contextParts = results
+        .map((r) {
+          final source =
+              r.chunk.metadata['documentTitle'] ?? r.chunk.documentId;
+          return '[$source, similarity: ${(r.similarity * 100).toStringAsFixed(0)}%]\n${r.chunk.text}';
+        })
+        .join('\n\n---\n\n');
 
     final augmentedPrompt = promptTemplate
         .replaceAll('{context}', contextParts)

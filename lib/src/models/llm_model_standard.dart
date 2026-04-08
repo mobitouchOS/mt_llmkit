@@ -47,7 +47,10 @@ class LlmModelStandard extends LlmModelBase {
     streamBatchByteThreshold: config.streamBatchByteThresholdDefault,
   );
 
-  LlamaChatMessage _buildMessage(String prompt, List<LlamaImageContent>? images) {
+  LlamaChatMessage _buildMessage(
+    String prompt,
+    List<LlamaImageContent>? images,
+  ) {
     if (images != null && images.isNotEmpty) {
       return LlamaChatMessage.withContent(
         role: LlamaChatRole.user,
@@ -90,10 +93,9 @@ class LlmModelStandard extends LlmModelBase {
     markGenerationStart();
     try {
       final buffer = StringBuffer();
-      await for (final chunk in _engine!.create(
-        [_buildMessage(prompt, images)],
-        params: _genParams,
-      )) {
+      await for (final chunk in _engine!.create([
+        _buildMessage(prompt, images),
+      ], params: _genParams)) {
         final text = chunk.choices.firstOrNull?.delta.content;
         if (text != null) buffer.write(text);
       }
@@ -115,10 +117,9 @@ class LlmModelStandard extends LlmModelBase {
 
     markGenerationStart();
     try {
-      await for (final chunk in _engine!.create(
-        [_buildMessage(prompt, images)],
-        params: _genParams,
-      )) {
+      await for (final chunk in _engine!.create([
+        _buildMessage(prompt, images),
+      ], params: _genParams)) {
         final text = chunk.choices.firstOrNull?.delta.content;
         if (text == null) continue;
 
@@ -154,10 +155,9 @@ class LlmModelStandard extends LlmModelBase {
 
     markGenerationStart();
     try {
-      await for (final chunk in _engine!.create(
-        [_buildMessage(prompt, images)],
-        params: _genParams,
-      )) {
+      await for (final chunk in _engine!.create([
+        _buildMessage(prompt, images),
+      ], params: _genParams)) {
         final text = chunk.choices.firstOrNull?.delta.content;
         if (text == null) continue;
 

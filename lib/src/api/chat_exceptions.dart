@@ -7,11 +7,7 @@
 /// - [NetworkException] — transport-level failures
 /// - [RateLimitException] — quota / rate-limit (HTTP 429)
 class AIChatException implements Exception {
-  const AIChatException(
-    this.message, {
-    this.statusCode,
-    this.cause,
-  });
+  const AIChatException(this.message, {this.statusCode, this.cause});
 
   /// Human-readable description of the error.
   final String message;
@@ -35,11 +31,7 @@ class AIChatException implements Exception {
 ///
 /// Typically maps to HTTP 401 or 403 responses.
 class APIKeyException extends AIChatException {
-  const APIKeyException(
-    super.message, {
-    super.statusCode,
-    super.cause,
-  });
+  const APIKeyException(super.message, {super.statusCode, super.cause});
 
   @override
   String toString() =>
@@ -50,11 +42,7 @@ class APIKeyException extends AIChatException {
 /// Thrown for transport-level failures such as timeouts, DNS errors,
 /// or connection resets.
 class NetworkException extends AIChatException {
-  const NetworkException(
-    super.message, {
-    super.statusCode,
-    super.cause,
-  });
+  const NetworkException(super.message, {super.statusCode, super.cause});
 
   @override
   String toString() =>
@@ -79,8 +67,9 @@ class RateLimitException extends AIChatException {
 
   @override
   String toString() {
-    final retry =
-        retryAfter != null ? ' Retry after ${retryAfter!.inSeconds}s.' : '';
+    final retry = retryAfter != null
+        ? ' Retry after ${retryAfter!.inSeconds}s.'
+        : '';
     return 'RateLimitException: $message$retry';
   }
 }

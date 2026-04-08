@@ -208,7 +208,9 @@ class RagEngine {
 
   void _checkReady() {
     if (!_isReady) {
-      throw StateError('RagEngine is not initialized. Call initialize() first.');
+      throw StateError(
+        'RagEngine is not initialized. Call initialize() first.',
+      );
     }
   }
 }

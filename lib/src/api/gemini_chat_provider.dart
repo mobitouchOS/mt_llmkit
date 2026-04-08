@@ -68,10 +68,10 @@ class GeminiChatProvider extends BaseAIChatProvider {
     Map<String, dynamic>? parameters,
   }) {
     checkInitialized();
-    return sendChatMessages(
-      [...?history, ChatMessage.user(message)],
-      parameters: parameters,
-    );
+    return sendChatMessages([
+      ...?history,
+      ChatMessage.user(message),
+    ], parameters: parameters);
   }
 
   @override
@@ -90,10 +90,10 @@ class GeminiChatProvider extends BaseAIChatProvider {
     Map<String, dynamic>? parameters,
   }) {
     checkInitialized();
-    return _doStreamRequest(
-      [...?history, ChatMessage.user(message)],
-      parameters,
-    );
+    return _doStreamRequest([
+      ...?history,
+      ChatMessage.user(message),
+    ], parameters);
   }
 
   @override
@@ -167,26 +167,24 @@ class GeminiChatProvider extends BaseAIChatProvider {
       throw mapHttpError(response.statusCode, errorBody);
     }
 
-    await for (final line in response.stream
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())) {
+    await for (final line
+        in response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
       if (line.isEmpty || !line.startsWith('data: ')) continue;
       try {
         final json = jsonDecode(line.substring(6)) as Map<String, dynamic>;
         final candidates = json['candidates'] as List?;
         if (candidates == null || candidates.isEmpty) continue;
-        final content = (candidates.first as Map<String, dynamic>)['content']
-            as Map<String, dynamic>?;
+        final content =
+            (candidates.first as Map<String, dynamic>)['content']
+                as Map<String, dynamic>?;
         final parts = content?['parts'] as List?;
         if (parts == null || parts.isEmpty) continue;
-        final text =
-            (parts.first as Map<String, dynamic>)['text'] as String?;
+        final text = (parts.first as Map<String, dynamic>)['text'] as String?;
         if (text != null && text.isNotEmpty) yield text;
       } catch (e) {
-        dev.log(
-          'Failed to parse SSE line: $line',
-          name: 'GeminiChatProvider',
-        );
+        dev.log('Failed to parse SSE line: $line', name: 'GeminiChatProvider');
       }
     }
   }
@@ -196,10 +194,12 @@ class GeminiChatProvider extends BaseAIChatProvider {
     Map<String, dynamic>? parameters,
   ) {
     // Separate system messages — Gemini uses a dedicated field
-    final systemMessages =
-        messages.where((m) => m.role == ChatRole.system).toList();
-    final conversationMessages =
-        messages.where((m) => m.role != ChatRole.system).toList();
+    final systemMessages = messages
+        .where((m) => m.role == ChatRole.system)
+        .toList();
+    final conversationMessages = messages
+        .where((m) => m.role != ChatRole.system)
+        .toList();
 
     final body = <String, dynamic>{
       'contents': conversationMessages
@@ -207,7 +207,7 @@ class GeminiChatProvider extends BaseAIChatProvider {
             (m) => {
               'role': m.role == ChatRole.assistant ? 'model' : 'user',
               'parts': [
-                {'text': m.content}
+                {'text': m.content},
               ],
             },
           )
@@ -240,8 +240,7 @@ class GeminiChatProvider extends BaseAIChatProvider {
     final candidate =
         (json['candidates'] as List).first as Map<String, dynamic>;
     final content = candidate['content'] as Map<String, dynamic>;
-    final text =
-        (content['parts'] as List).first['text'] as String;
+    final text = (content['parts'] as List).first['text'] as String;
     final usage = json['usageMetadata'] as Map<String, dynamic>?;
     return ChatResponse(
       message: ChatMessage(role: ChatRole.assistant, content: text),

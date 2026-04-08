@@ -66,13 +66,18 @@ class InMemoryVectorStore implements VectorStore {
     for (final chunk in _chunks) {
       if (chunk.embedding == null) continue;
 
-      final similarity = VectorSimilarity.cosine(queryEmbedding, chunk.embedding!);
+      final similarity = VectorSimilarity.cosine(
+        queryEmbedding,
+        chunk.embedding!,
+      );
       if (similarity >= minSimilarity) {
-        results.add(VectorSearchResult(
-          chunk: chunk,
-          similarity: similarity,
-          rank: 0, // filled in below
-        ));
+        results.add(
+          VectorSearchResult(
+            chunk: chunk,
+            similarity: similarity,
+            rank: 0, // filled in below
+          ),
+        );
       }
     }
 

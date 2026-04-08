@@ -62,16 +62,16 @@ class DocumentChunk {
   // ── Serialization ────────────────────────────────────────────────────────
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'documentId': documentId,
-        'text': text,
-        'chunkIndex': chunkIndex,
-        'startChar': startChar,
-        'endChar': endChar,
-        // List<double> → List<dynamic> (JSON compatible)
-        'embedding': embedding,
-        'metadata': metadata,
-      };
+    'id': id,
+    'documentId': documentId,
+    'text': text,
+    'chunkIndex': chunkIndex,
+    'startChar': startChar,
+    'endChar': endChar,
+    // List<double> → List<dynamic> (JSON compatible)
+    'embedding': embedding,
+    'metadata': metadata,
+  };
 
   factory DocumentChunk.fromJson(Map<String, dynamic> json) {
     final rawEmbedding = json['embedding'] as List<dynamic>?;
