@@ -42,10 +42,7 @@ void main() {
 
     test('every provider implements AIChatProvider', () {
       for (final type in AIChatProviderType.values) {
-        expect(
-          AIChatProviderFactory.create(type),
-          isA<AIChatProvider>(),
-        );
+        expect(AIChatProviderFactory.create(type), isA<AIChatProvider>());
       }
     });
 
@@ -88,8 +85,11 @@ void main() {
       for (final type in AIChatProviderType.values) {
         final provider = AIChatProviderFactory.create(type);
         await provider.initialize({'apiKey': 'test-key'});
-        expect(provider.isInitialized, isTrue,
-            reason: '$type should be initialized');
+        expect(
+          provider.isInitialized,
+          isTrue,
+          reason: '$type should be initialized',
+        );
         await provider.dispose();
       }
     });

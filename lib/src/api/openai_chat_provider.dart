@@ -72,10 +72,10 @@ class OpenAIChatProvider extends BaseAIChatProvider {
     Map<String, dynamic>? parameters,
   }) {
     checkInitialized();
-    return sendChatMessages(
-      [...?history, ChatMessage.user(message)],
-      parameters: parameters,
-    );
+    return sendChatMessages([
+      ...?history,
+      ChatMessage.user(message),
+    ], parameters: parameters);
   }
 
   @override
@@ -94,10 +94,10 @@ class OpenAIChatProvider extends BaseAIChatProvider {
     Map<String, dynamic>? parameters,
   }) {
     checkInitialized();
-    return _doStreamRequest(
-      [...?history, ChatMessage.user(message)],
-      parameters,
-    );
+    return _doStreamRequest([
+      ...?history,
+      ChatMessage.user(message),
+    ], parameters);
   }
 
   @override
@@ -143,9 +143,10 @@ class OpenAIChatProvider extends BaseAIChatProvider {
     Map<String, dynamic>? parameters,
   ) async* {
     final body = _buildBody(messages, parameters, stream: true);
-    final request = http.Request('POST', Uri.parse('$_baseUrl/chat/completions'))
-      ..headers.addAll(_headers())
-      ..body = jsonEncode(body);
+    final request =
+        http.Request('POST', Uri.parse('$_baseUrl/chat/completions'))
+          ..headers.addAll(_headers())
+          ..body = jsonEncode(body);
 
     final http.StreamedResponse response;
     try {
@@ -164,9 +165,10 @@ class OpenAIChatProvider extends BaseAIChatProvider {
     }
 
     // Each SSE line: "data: {json}" or "data: [DONE]"
-    await for (final line in response.stream
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())) {
+    await for (final line
+        in response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
       if (line.isEmpty || line == 'data: [DONE]') continue;
       if (!line.startsWith('data: ')) continue;
       try {
@@ -174,14 +176,12 @@ class OpenAIChatProvider extends BaseAIChatProvider {
         final choices = json['choices'] as List?;
         if (choices == null || choices.isEmpty) continue;
         final delta =
-            (choices.first as Map<String, dynamic>)['delta'] as Map<String, dynamic>?;
+            (choices.first as Map<String, dynamic>)['delta']
+                as Map<String, dynamic>?;
         final token = delta?['content'] as String?;
         if (token != null && token.isNotEmpty) yield token;
       } catch (e) {
-        dev.log(
-          'Failed to parse SSE line: $line',
-          name: 'OpenAIChatProvider',
-        );
+        dev.log('Failed to parse SSE line: $line', name: 'OpenAIChatProvider');
       }
     }
   }
@@ -203,9 +203,9 @@ class OpenAIChatProvider extends BaseAIChatProvider {
   }
 
   Map<String, String> _headers() => {
-        'Authorization': 'Bearer $_apiKey',
-        'Content-Type': 'application/json',
-      };
+    'Authorization': 'Bearer $_apiKey',
+    'Content-Type': 'application/json',
+  };
 
   ChatResponse _parseResponse(Map<String, dynamic> json) {
     final choice = (json['choices'] as List).first as Map<String, dynamic>;

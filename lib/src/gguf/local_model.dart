@@ -91,7 +91,9 @@ class LocalModel implements LlmInterface {
 
   void _ensureInitialized() {
     if (_model == null || !_model!.isInitialized) {
-      throw StateError('LocalModel is not initialized. Call loadModel() first.');
+      throw StateError(
+        'LocalModel is not initialized. Call loadModel() first.',
+      );
     }
   }
 }

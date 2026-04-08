@@ -69,10 +69,10 @@ class ClaudeChatProvider extends BaseAIChatProvider {
     Map<String, dynamic>? parameters,
   }) {
     checkInitialized();
-    return sendChatMessages(
-      [...?history, ChatMessage.user(message)],
-      parameters: parameters,
-    );
+    return sendChatMessages([
+      ...?history,
+      ChatMessage.user(message),
+    ], parameters: parameters);
   }
 
   @override
@@ -91,10 +91,10 @@ class ClaudeChatProvider extends BaseAIChatProvider {
     Map<String, dynamic>? parameters,
   }) {
     checkInitialized();
-    return _doStreamRequest(
-      [...?history, ChatMessage.user(message)],
-      parameters,
-    );
+    return _doStreamRequest([
+      ...?history,
+      ChatMessage.user(message),
+    ], parameters);
   }
 
   @override
@@ -163,9 +163,10 @@ class ClaudeChatProvider extends BaseAIChatProvider {
     // Claude SSE pairs "event: <type>" lines with "data: {json}" lines.
     // We only care about `content_block_delta` events.
     String? currentEvent;
-    await for (final line in response.stream
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())) {
+    await for (final line
+        in response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
       if (line.startsWith('event: ')) {
         currentEvent = line.substring(7).trim();
         continue;
@@ -174,8 +175,7 @@ class ClaudeChatProvider extends BaseAIChatProvider {
 
       if (currentEvent == 'content_block_delta') {
         try {
-          final json =
-              jsonDecode(line.substring(6)) as Map<String, dynamic>;
+          final json = jsonDecode(line.substring(6)) as Map<String, dynamic>;
           final delta = json['delta'] as Map<String, dynamic>?;
           if (delta?['type'] == 'text_delta') {
             final text = delta!['text'] as String?;
@@ -197,10 +197,12 @@ class ClaudeChatProvider extends BaseAIChatProvider {
     required bool stream,
   }) {
     // Claude requires system messages as a separate top-level field
-    final systemMessages =
-        messages.where((m) => m.role == ChatRole.system).toList();
-    final conversationMessages =
-        messages.where((m) => m.role != ChatRole.system).toList();
+    final systemMessages = messages
+        .where((m) => m.role == ChatRole.system)
+        .toList();
+    final conversationMessages = messages
+        .where((m) => m.role != ChatRole.system)
+        .toList();
 
     final body = <String, dynamic>{
       'model': (parameters?['model'] as String?) ?? _model,
@@ -222,18 +224,16 @@ class ClaudeChatProvider extends BaseAIChatProvider {
   }
 
   Map<String, String> _headers() => {
-        'x-api-key': _apiKey,
-        'anthropic-version': _anthropicVersion,
-        'Content-Type': 'application/json',
-      };
+    'x-api-key': _apiKey,
+    'anthropic-version': _anthropicVersion,
+    'Content-Type': 'application/json',
+  };
 
   ChatResponse _parseResponse(Map<String, dynamic> json) {
     final contentBlocks = json['content'] as List;
     // Concatenate all text blocks (in practice usually just one)
     final text = contentBlocks
-        .where(
-          (b) => (b as Map<String, dynamic>)['type'] == 'text',
-        )
+        .where((b) => (b as Map<String, dynamic>)['type'] == 'text')
         .map((b) => (b as Map<String, dynamic>)['text'] as String)
         .join();
     final usage = json['usage'] as Map<String, dynamic>?;

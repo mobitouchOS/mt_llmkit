@@ -18,15 +18,15 @@ class ChatMessage {
 
   /// Shorthand for a user message.
   const ChatMessage.user(String content)
-      : this(role: ChatRole.user, content: content);
+    : this(role: ChatRole.user, content: content);
 
   /// Shorthand for an assistant message.
   const ChatMessage.assistant(String content)
-      : this(role: ChatRole.assistant, content: content);
+    : this(role: ChatRole.assistant, content: content);
 
   /// Shorthand for a system instruction message.
   const ChatMessage.system(String content)
-      : this(role: ChatRole.system, content: content);
+    : this(role: ChatRole.system, content: content);
 
   /// The role of the message author.
   final ChatRole role;
@@ -38,10 +38,7 @@ class ChatMessage {
   ///
   /// Other providers may need custom mapping (e.g. Gemini uses "model"
   /// instead of "assistant").
-  Map<String, dynamic> toJson() => {
-        'role': role.name,
-        'content': content,
-      };
+  Map<String, dynamic> toJson() => {'role': role.name, 'content': content};
 
   @override
   String toString() => 'ChatMessage(${role.name}: $content)';
