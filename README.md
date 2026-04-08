@@ -12,7 +12,7 @@ A Flutter plugin for running Large Language Models (LLMs) locally on Android and
    - [Backends](#backends)
    - [Configuration](#configuration)
    - [Generation methods](#generation-methods)
-   - [Prompt formats](#prompt-formats)
+   - [Prompt format](#prompt-format)
    - [Performance metrics](#performance-metrics)
 3. [Vision (Multimodal)](#vision-multimodal)
    - [Quick start](#quick-start-vision)
@@ -66,36 +66,36 @@ Run quantized GGUF models entirely on-device — no internet connection required
 ### Quick start
 
 ```dart
-final plugin = GgufPlugin(
+final model = LocalModel(
   config: LlmConfig(temp: 0.7, nCtx: 2048, nGpuLayers: 4),
 );
 
-await plugin.loadModel('/path/to/model.gguf');
+await model.loadModel('/path/to/model.gguf');
 
 // Stream tokens as they are generated
-plugin.sendPrompt('What is Flutter?').listen((token) {
+model.sendPrompt('What is Flutter?').listen((token) {
   stdout.write(token);
 });
 
-plugin.dispose();
+model.dispose();
 ```
 
 ### Backends
 
-`GgufPlugin` supports two backends controlled by the `backend` parameter:
+`LocalModel` supports two backends controlled by the `backend` parameter:
 
 | Backend | Class | When to use |
 |---|---|---|
-| `GGUFBackend.isolate` *(default)* | `LlmModelIsolated` | Production. Runs in a Dart Isolate — no UI jank. Required when loading multiple models (e.g. RAG). |
-| `GGUFBackend.inProcess` | `LlmModelStandard` | Lighter startup cost. Supports `clean()` to reset context without reloading the model. |
+| `ModelBackend.isolate` *(default)* | `LlmModelIsolated` | Production. Runs in a Dart Isolate — no UI jank. Required when loading multiple models (e.g. RAG). |
+| `ModelBackend.inProcess` | `LlmModelStandard` | Lighter startup cost. Supports `clean()` to reset context without reloading the model. |
 
 ```dart
 // Isolate backend (default)
-final plugin = GgufPlugin(backend: GGUFBackend.isolate);
+final model = LocalModel(backend: ModelBackend.isolate);
 
 // In-process backend
-final plugin = GgufPlugin(backend: GGUFBackend.inProcess);
-plugin.clean(); // reset context — only available with inProcess
+final model = LocalModel(backend: ModelBackend.inProcess);
+model.clean(); // reset context — only available with inProcess
 ```
 
 > **Note:** `clean()` throws `UnsupportedError` when called on the `isolate` backend.
@@ -106,7 +106,6 @@ All parameters are optional; sensible defaults are applied automatically.
 
 ```dart
 final config = LlmConfig(
-  promptFormat: ChatMLFormat(),  // default
   nGpuLayers: 4,    // GPU layers offloaded (default: 64)
   nCtx: 2048,       // context window in tokens (default: 8192)
   nBatch: 512,      // batch size (default: 4096)
@@ -121,7 +120,7 @@ final config = LlmConfig(
 
 ### Generation methods
 
-Three methods are available on `GgufPlugin` (and any `LlmInterface` implementation):
+Three methods are available on `LocalModel` (and any `LlmInterface` implementation):
 
 | Method | Return type | Description |
 |---|---|---|
@@ -131,14 +130,14 @@ Three methods are available on `GgufPlugin` (and any `LlmInterface` implementati
 
 ```dart
 // 1. Raw token stream
-plugin.sendPrompt('Hello').listen(stdout.write);
+model.sendPrompt('Hello').listen(stdout.write);
 
 // 2. Full response at once
-final response = await plugin.sendPromptComplete('Hello');
+final response = await model.sendPromptComplete('Hello');
 print(response);
 
 // 3. Streaming with live metrics (recommended)
-plugin.sendPromptStream('Hello').listen((chunk) {
+model.sendPromptStream('Hello').listen((chunk) {
   stdout.write(chunk.text);
 
   if (chunk.isFinal && chunk.metrics != null) {
@@ -158,18 +157,14 @@ plugin.sendPromptStream('Hello').listen((chunk) {
 
 `PerformanceMetrics` fields: `tokensGenerated`, `durationMs`, `tokensPerSecond`, `msPerToken`.
 
-### Prompt formats
+### Prompt format
 
-The format wraps the raw prompt in model-specific delimiters. Set it via `LlmConfig.promptFormat`:
+Override the model's built-in chat template by passing a raw GGUF/Jinja template string via `LlmConfig.chatTemplate`. When `chatTemplate` is `null` (the default), the template embedded in the model file is used automatically.
 
 ```dart
-// Built-in formats
-LlmConfig(promptFormat: ChatMLFormat())   // default — Llama 3, Mistral, etc.
-LlmConfig(promptFormat: AlpacaFormat())   // Alpaca instruction format
-LlmConfig(promptFormat: GemmaFormat())    // Google Gemma
-
-// Custom format (shipped in this package)
-LlmConfig(promptFormat: HarmonyFormat())
+final config = LlmConfig(
+  chatTemplate: '<|user|>\n{prompt}<|end|>\n<|assistant|>\n', // custom override
+);
 ```
 
 ### Performance metrics
@@ -177,7 +172,7 @@ LlmConfig(promptFormat: HarmonyFormat())
 `PerformanceMetrics` is updated incrementally with every `StreamingChunk`:
 
 ```dart
-plugin.sendPromptStream('Explain Dart isolates in detail.').listen((chunk) {
+model.sendPromptStream('Explain Dart isolates in detail.').listen((chunk) {
   stdout.write(chunk.text);
 
   if (chunk.metrics != null) {
@@ -191,12 +186,12 @@ plugin.sendPromptStream('Explain Dart isolates in detail.').listen((chunk) {
 
 ## Vision (Multimodal)
 
-`GgufPlugin` supports multimodal vision models (LLaVA, Gemma 3, Qwen VL, SmolVLM, etc.) that can analyse images alongside a text prompt. Vision requires two GGUF files: the main language model and a **multimodal projector** (`mmproj-*.gguf`).
+`LocalModel` supports multimodal vision models (LLaVA, Gemma 3, Qwen VL, SmolVLM, etc.) that can analyse images alongside a text prompt. Vision requires two GGUF files: the main language model and a **multimodal projector** (`mmproj-*.gguf`).
 
 ### Quick start (vision) {#quick-start-vision}
 
 ```dart
-final plugin = GgufPlugin(
+final model = LocalModel(
   config: LlmConfig(
     mmprojPath: '/path/to/mmproj-model-f16-4B.gguf',
     nGpuLayers: 4,
@@ -206,13 +201,13 @@ final plugin = GgufPlugin(
   ),
 );
 
-await plugin.loadModel('/path/to/gemma-3-4b-it-q4_0.gguf');
+await model.loadModel('/path/to/gemma-3-4b-it-q4_0.gguf');
 
-final image = LlamaImage.fromFile(File('/path/to/photo.jpg'));
+final image = LlamaImageContent(path: '/path/to/photo.jpg');
 
-plugin.sendPromptStreamWithImages(
+model.sendPromptStream(
   'Describe what you see in this image. <image>',
-  [image],
+  images: [image],
 ).listen((chunk) {
   stdout.write(chunk.text);
 
@@ -239,34 +234,31 @@ Each model has a corresponding `mmproj-*.gguf` file available on Hugging Face al
 
 ### Image input
 
-`LlamaImage` can be created from a file path or raw bytes:
+`LlamaImageContent` is created by providing the image file path:
 
 ```dart
-// From a file (preferred — passes only the path to the isolate)
-final image = LlamaImage.fromFile(File('/path/to/photo.jpg'));
-
-// From raw bytes (e.g. from a network request or asset)
-final bytes = await File('/path/to/photo.png').readAsBytes();
-final image = LlamaImage.fromBytes(bytes);
+final image = LlamaImageContent(path: '/path/to/photo.jpg');
 ```
 
-Supported formats: JPEG, PNG, and any format decodable by the `image` package.
+Supported formats: JPEG, PNG, and any format supported by the underlying `libmtmd` library.
 
 ### Generation methods (vision) {#generation-methods-1}
 
+All three standard generation methods accept an optional `images` parameter:
+
 | Method | Return type | Description |
 |---|---|---|
-| `sendPromptWithImages(prompt, images)` | `Stream<String>` | Raw token stream. |
-| `sendPromptCompleteWithImages(prompt, images)` | `Future<String>` | Full response as a single string. |
-| `sendPromptStreamWithImages(prompt, images)` | `Stream<StreamingChunk>` | **Recommended.** Streaming with live performance metrics. |
+| `sendPrompt(prompt, images: images)` | `Stream<String>` | Raw token stream. |
+| `sendPromptComplete(prompt, images: images)` | `Future<String>` | Full response as a single string. |
+| `sendPromptStream(prompt, images: images)` | `Stream<StreamingChunk>` | **Recommended.** Streaming with live performance metrics. |
 
 All three methods throw `UnsupportedError` if `LlmConfig.mmprojPath` was not set.
 
 ```dart
 // Full response at once
-final response = await plugin.sendPromptCompleteWithImages(
+final response = await model.sendPromptComplete(
   'What objects are visible in this photo? <image>',
-  [LlamaImage.fromFile(File('/path/to/photo.jpg'))],
+  images: [LlamaImageContent(path: '/path/to/photo.jpg')],
 );
 print(response);
 ```
@@ -434,7 +426,7 @@ try {
 
 ## Local RAG Pipeline
 
-`RagPlugin` provides a fully on-device Retrieval-Augmented Generation pipeline. Documents are chunked, embedded with a local embedding model, stored in an in-memory vector store, and retrieved at query time to ground the generation model's response.
+`RagEngine` provides a fully on-device Retrieval-Augmented Generation pipeline. Documents are chunked, embedded with a local embedding model, stored in an in-memory vector store, and retrieved at query time to ground the generation model's response.
 
 ### How it works
 
@@ -452,7 +444,7 @@ You need two GGUF models:
 - An **embedding model** (e.g. nomic-embed-text) for vectorising text.
 
 ```dart
-final rag = RagPlugin(
+final rag = RagEngine(
   genModelPath: '/path/to/llama.gguf',
   embedModelPath: '/path/to/nomic-embed.gguf',
   genConfig: LlmConfig(temp: 0.3, nCtx: 4096, nGpuLayers: 4),
@@ -468,7 +460,7 @@ Create a `Document` from text or PDF content and ingest it into the vector store
 ```dart
 // From plain text
 final doc = Document.fromText(
-  'Flutter is Google's UI toolkit for building natively compiled applications...',
+  'Flutter is Google\'s UI toolkit for building natively compiled applications...',
   source: 'flutter_intro.txt',
 );
 
@@ -537,7 +529,7 @@ Pass `indexPath` to automatically save and restore the vector index between sess
 ```dart
 final dir = await getApplicationDocumentsDirectory();
 
-final rag = RagPlugin(
+final rag = RagEngine(
   genModelPath: '/path/to/llama.gguf',
   embedModelPath: '/path/to/nomic-embed.gguf',
   indexPath: '${dir.path}/rag_index.json',  // auto-save on every change
@@ -553,7 +545,7 @@ When `indexPath` is `null`, the store is in-memory only and data is lost when th
 The default template instructs the model to answer only from the provided context. Override it if you need different behaviour:
 
 ```dart
-final rag = RagPlugin(
+final rag = RagEngine(
   genModelPath: '...',
   embedModelPath: '...',
   promptTemplate:
