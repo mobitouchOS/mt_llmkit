@@ -286,7 +286,52 @@ class LlmModelIsolated extends LlmModelBase {
   Isolate? _isolate;
   SendPort? _workerPort;
 
+  /// Ports the isolate's death arrives on. Closed during [dispose].
+  ReceivePort? _exitPort;
+  ReceivePort? _errorPort;
+
+  /// Completes with an error the moment the worker dies unexpectedly.
+  ///
+  /// Every reply from the worker is awaited on a fresh `ReceivePort`, and a
+  /// dead isolate simply never sends — so without this, one crashed worker
+  /// (an out-of-memory kill on a multi-gigabyte model, a native abort) left
+  /// every load, call and turn waiting forever instead of reporting a failure
+  /// the caller could act on.
+  Completer<Never>? _workerDeath;
+
+  /// Whether a worker is supposed to be running right now.
+  ///
+  /// Distinct from `_workerPort != null`, which is still null during the
+  /// startup handshake — the window where a worker that dies before it
+  /// answers would otherwise go unnoticed. Cleared by [dispose], so a
+  /// deliberate teardown is never reported as a crash.
+  bool _workerExpectedAlive = false;
+
   LlmModelIsolated(this.config);
+
+  /// Never completes normally; completes with an error when the worker dies.
+  ///
+  /// Race a reply against this so nothing waits on a corpse. The loser of the
+  /// race stays subscribed, so the error is marked observed up front — an
+  /// unhandled one would reach the zone handler and take the host app down.
+  Future<Never> get _onWorkerDeath {
+    final death = _workerDeath ??= Completer<Never>();
+    death.future.ignore();
+    return death.future;
+  }
+
+  /// Marks the worker gone and fails everything waiting on it.
+  void _reportWorkerDeath(String reason) {
+    if (!_workerExpectedAlive) return; // already gone, or a clean dispose
+    _workerExpectedAlive = false;
+    _workerPort = null;
+    final death = _workerDeath;
+    if (death == null || death.isCompleted) return;
+    death.completeError(
+      LlamaInferenceException('The inference worker stopped', reason),
+      StackTrace.current,
+    );
+  }
 
   @override
   Future<void> loadModel(String localPath) async {
@@ -310,12 +355,33 @@ class LlmModelIsolated extends LlmModelBase {
     if (_workerPort != null) return;
 
     final initPort = ReceivePort();
-    _isolate = await Isolate.spawn(_llamaIsolateWorkerMain, {
-      'config': config,
-      'sendPort': initPort.sendPort,
-    }, debugName: 'mt_llmkit_LlamaWorker');
 
-    final initMsg = await initPort.first as Map<String, dynamic>;
+    // Watched for the whole life of the worker, not just the handshake: a
+    // crash after startup is exactly the case that used to hang callers.
+    final exitPort = ReceivePort()
+      ..listen((_) => _reportWorkerDeath('the isolate exited'));
+    final errorPort = ReceivePort()
+      ..listen(
+        (dynamic error) => _reportWorkerDeath('$error'),
+      );
+    _exitPort = exitPort;
+    _errorPort = errorPort;
+    _workerExpectedAlive = true;
+    _workerDeath = null;
+
+    _isolate = await Isolate.spawn(
+      _llamaIsolateWorkerMain,
+      {'config': config, 'sendPort': initPort.sendPort},
+      debugName: 'mt_llmkit_LlamaWorker',
+      onExit: exitPort.sendPort,
+      onError: errorPort.sendPort,
+    );
+
+    // Startup can fail too — without the race a worker that dies before its
+    // handshake would hang the very first loadModel().
+    final initMsg =
+        await Future.any([initPort.first, _onWorkerDeath])
+            as Map<String, dynamic>;
     initPort.close();
     _workerPort = initMsg['port'] as SendPort;
   }
@@ -329,8 +395,13 @@ class LlmModelIsolated extends LlmModelBase {
     final replyPort = ReceivePort();
     _workerPort!.send({...args, 'type': type, 'replyPort': replyPort.sendPort});
 
-    final reply = (await replyPort.first as Map).cast<String, dynamic>();
-    replyPort.close();
+    final Map<String, dynamic> reply;
+    try {
+      reply = ((await Future.any([replyPort.first, _onWorkerDeath])) as Map)
+          .cast<String, dynamic>();
+    } finally {
+      replyPort.close();
+    }
 
     if (reply['type'] == 'error') {
       throw decodeError(reply, context: context);
@@ -364,16 +435,29 @@ class LlmModelIsolated extends LlmModelBase {
 
   /// One request-reply session operation on the worker's registry.
   Future<Object?> _sessionCall(String method, Map<String, dynamic> args) async {
+    final workerPort = _workerPort;
+    if (workerPort == null) {
+      throw LlamaStateException(
+        'Conversation "$method" failed',
+        'the inference worker is not running',
+      );
+    }
+
     final replyPort = ReceivePort();
-    _workerPort!.send({
+    workerPort.send({
       'type': 'session',
       'method': method,
       'args': args,
       'replyPort': replyPort.sendPort,
     });
 
-    final reply = (await replyPort.first as Map).cast<String, dynamic>();
-    replyPort.close();
+    final Map<String, dynamic> reply;
+    try {
+      reply = ((await Future.any([replyPort.first, _onWorkerDeath])) as Map)
+          .cast<String, dynamic>();
+    } finally {
+      replyPort.close();
+    }
 
     if (reply['type'] == 'error') {
       throw decodeError(reply, context: 'Conversation "$method" failed');
@@ -412,7 +496,32 @@ class LlmModelIsolated extends LlmModelBase {
       }
     });
 
+    // A dead worker sends neither 'done' nor 'error', so without this the
+    // stream would stay open forever and the caller would wait on a turn that
+    // can never arrive.
+    _onWorkerDeath.onError<Object>((error, stackTrace) {
+      replyPort.close();
+      if (!controller.isClosed) {
+        controller.addError(error, stackTrace);
+        controller.close();
+      }
+      throw error;
+    }).ignore();
+
     controller.onCancel = () {
+      // Tell the worker to stop, not just stop listening to it. Closing the
+      // port alone left llama.cpp decoding the abandoned answer to the end of
+      // its token budget — minutes on a CPU-only model — with the next turn
+      // queued behind it and nothing on screen to explain the wait.
+      //
+      // Not awaited: `cancel` is dispatched outside the worker's turn queue,
+      // so it lands while the turn is still running, which is the point. It is
+      // also a no-op on an already-closed conversation. Failures are ignored —
+      // we are already tearing this turn down, and a worker that has gone away
+      // needs no telling.
+      unawaited(
+        _sessionCall('cancel', {'id': id}).catchError((Object _) => null),
+      );
       sub.cancel();
       replyPort.close();
     };
@@ -626,6 +735,9 @@ class LlmModelIsolated extends LlmModelBase {
   Future<void> dispose() async {
     final workerPort = _workerPort;
     _workerPort = null;
+    // Cleared first so the exit notification this teardown is about to trigger
+    // is not reported to callers as a crash.
+    _workerExpectedAlive = false;
 
     if (workerPort != null) {
       // Wait for the worker to confirm llama.cpp released its handles before
@@ -644,20 +756,36 @@ class LlmModelIsolated extends LlmModelBase {
 
     _isolate?.kill(priority: Isolate.beforeNextEvent);
     _isolate = null;
+
+    _exitPort?.close();
+    _errorPort?.close();
+    _exitPort = null;
+    _errorPort = null;
+    _workerDeath = null;
+
     markAsDisposed();
   }
 
   /// Round-trips one non-streaming engine call through the worker.
   Future<Object?> _call(String method, [Map<String, dynamic> args = const {}]) {
     checkInitialized();
+    final workerPort = _workerPort;
+    if (workerPort == null) {
+      throw LlamaStateException(
+        'Engine call "$method" failed',
+        'the inference worker is not running',
+      );
+    }
     final replyPort = ReceivePort();
-    _workerPort!.send({
+    workerPort.send({
       'type': 'call',
       'method': method,
       'args': args,
       'replyPort': replyPort.sendPort,
     });
-    return replyPort.first.then((dynamic response) {
+    return Future.any([replyPort.first, _onWorkerDeath]).then((
+      dynamic response,
+    ) {
       replyPort.close();
       final map = (response as Map).cast<String, dynamic>();
       if (map['type'] == 'error') {

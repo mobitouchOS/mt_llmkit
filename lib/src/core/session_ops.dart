@@ -137,6 +137,16 @@ class _SessionEntry {
   final SessionOptions options;
   StreamSubscription<LlamaCompletionChunk>? subscription;
 
+  /// Releases the in-flight turn's `await finished.future`.
+  ///
+  /// Cancelling [subscription] is not enough to end a turn: a cancelled
+  /// subscription never delivers `onDone`, so the turn would wait forever and
+  /// — because turns run inside the model's serialized queue — wedge every
+  /// later operation on this model behind it. Whoever cancels calls this.
+  ///
+  /// Null while no turn is running.
+  void Function()? settleTurn;
+
   _SessionEntry(this.session, this.options);
 }
 
@@ -193,7 +203,8 @@ class SessionRegistry {
 
   void close(String id) {
     final entry = _sessions.remove(id);
-    entry?.subscription?.cancel();
+    if (entry == null) return;
+    _abortTurn(entry);
   }
 
   /// Closes every conversation. Used when the model is unloaded or the whole
@@ -243,8 +254,21 @@ class SessionRegistry {
 
   void cancel(String id) {
     final entry = _sessions[id];
-    entry?.subscription?.cancel();
-    entry?.subscription = null;
+    if (entry == null) return;
+    _abortTurn(entry);
+  }
+
+  /// Stops the entry's in-flight turn and lets [_runTurn] finish.
+  ///
+  /// Clearing `subscription` is what [_runTurn] reads to tell an interrupted
+  /// turn from a completed one, and [_SessionEntry.settleTurn] is what actually
+  /// releases it. Both are required: without the first the turn would publish a
+  /// final event for an answer that never finished, and without the second it
+  /// would never return at all.
+  void _abortTurn(_SessionEntry entry) {
+    entry.subscription?.cancel();
+    entry.subscription = null;
+    entry.settleTurn?.call();
   }
 
   /// Runs one turn, queued behind any other turn on this model.
@@ -300,6 +324,11 @@ class SessionRegistry {
     void settle() {
       if (!finished.isCompleted) finished.complete();
     }
+
+    // Published so cancel()/close() can end this turn. Without it a cancelled
+    // subscription leaves `finished` forever incomplete, and this frame holds
+    // the model's serialized queue.
+    entry.settleTurn = settle;
 
     /// Fails the turn before the caller consumes output built on a prompt that
     /// llamadart already knows did not fit.
@@ -372,6 +401,8 @@ class SessionRegistry {
         );
 
     await finished.future;
+
+    entry.settleTurn = null;
 
     final wasCancelled =
         entry.subscription == null && !controller.isClosed && !failedFit;

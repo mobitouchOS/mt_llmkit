@@ -420,5 +420,63 @@ void main() {
       await second;
       expect(f.session.continuationFlags, hasLength(2));
     });
+
+    // Interrupting a turn used to wedge the queue for the rest of the
+    // process: a cancelled subscription never delivers `onDone`, so the turn
+    // sat on `await finished.future` forever while holding the queue, and
+    // every later turn — and every load/unload — waited behind it with no
+    // token, no error and no end. In the app that showed as a chat that
+    // answered once and then hung on "thinking" until it was restarted.
+    group('an interrupted turn frees the queue', () {
+      /// Starts a turn and blocks it inside `create`, so the interruption
+      /// under test lands while the turn genuinely holds the queue.
+      ({Future<void> Function() interruptViaCancel, FakeChatSession session})
+      gatedTurn(SessionRegistry registry, FakeChatSession session) {
+        session.gate = Completer<void>();
+        final sub = registry
+            .turn('s0', const TurnRequest(message: 'hi'))
+            .listen(null);
+        return (interruptViaCancel: sub.cancel, session: session);
+      }
+
+      /// Runs a fresh turn and fails the test if the queue never gets to it.
+      Future<List<GenerationEvent>> nextTurn(SessionRegistry registry) {
+        registry.open('s1', const SessionOptions());
+        return _drain(
+          registry.turn('s1', const TurnRequest(message: 'again')),
+        ).timeout(
+          const Duration(seconds: 5),
+          onTimeout: () => fail('queue never ran the next turn'),
+        );
+      }
+
+      test('after the listener cancels', () async {
+        final f = _build(script: [_chunk(text: 'partial')]);
+        final turn = gatedTurn(f.registry, f.session);
+        await Future<void>.delayed(Duration.zero);
+
+        await turn.interruptViaCancel();
+
+        // Let the abandoned turn run to completion had it been resumed, so a
+        // pass cannot come from the gate being released behind our back.
+        f.session.gate = null;
+
+        expect((await nextTurn(f.registry)).last.isFinal, isTrue);
+      });
+
+      test('after the conversation is closed mid-turn', () async {
+        // The path the app actually takes: its generation stream has a
+        // `finally { conversation.close(); }`, and close() is dispatched
+        // outside the queue, so it lands while the turn is still decoding.
+        final f = _build(script: [_chunk(text: 'partial')]);
+        gatedTurn(f.registry, f.session);
+        await Future<void>.delayed(Duration.zero);
+
+        f.registry.close('s0');
+        f.session.gate = null;
+
+        expect((await nextTurn(f.registry)).last.isFinal, isTrue);
+      });
+    });
   });
 }
