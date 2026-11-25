@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**mt_llmkit** is a Flutter plugin that enables running Large Language Models (LLMs) locally on Android and iOS using [llamadart](https://pub.dev/packages/llamadart) (`0.6.10`). It provides real-time streaming inference, performance metrics, cloud AI chat providers, and a fully local RAG pipeline.
+**mt_llmkit** is a Flutter plugin that enables running Large Language Models (LLMs) locally on Android and iOS using [llamadart](https://pub.dev/packages/llamadart) (`^0.8.22`). It provides real-time streaming inference, performance metrics, cloud AI chat providers, and a fully local RAG pipeline.
+
+Requires Flutter `>=3.38.0` (llamadart 0.8.x) and iOS `16.4`+.
 
 ## Commands
 
@@ -35,7 +37,7 @@ cd example && flutter pub get && flutter run
 
 ### Public API
 
-`lib/llmcpp.dart` is the single export file. It re-exports everything from `src/` plus `LlamaImageContent`, `LlamaTextContent`, `LlamaContentPart`, `GpuBackend`, `LoraAdapterConfig`, `GenerationGrammarTrigger` from `llamadart`.
+`lib/mt_llmkit.dart` is the single export file. It re-exports everything from `src/` plus, from `llamadart`: the content parts (`LlamaContentPart`, `LlamaTextContent`, `LlamaImageContent`, `LlamaAudioContent`), `GpuBackend`, `LoraAdapterConfig`, `GenerationGrammarTrigger`, the config knobs surfaced through `LlmConfig` (`FlashAttention`, `KvCacheType`, `ThinkingBudget`, `SpeculativeDecodingConfig`), and the `LlamaException` hierarchy.
 
 ### Class Hierarchy
 
@@ -54,9 +56,16 @@ LlmInterface (abstract interface)               ← lib/src/core/llm_interface.d
 2. `sendPromptComplete(prompt) → Future<String>` — full response as a single string
 3. `sendPromptStream(prompt) → Stream<StreamingChunk>` — **recommended**: live streaming + real-time metrics
 
-All three accept an optional `images` parameter for vision models.
+All three take the same optional arguments:
 
-`StreamingChunk` carries: `text`, `metrics` (`PerformanceMetrics`), and `isFinal` flag.
+- `systemPrompt` — sent as a real `system` message
+- `attachments` (`List<LlamaContentPart>`) — `LlamaImageContent` for vision models (needs `mmprojPath`), `LlamaAudioContent` for audio-capable ones
+- `overrides` (`GenerationOverrides`) — sampling for this request only, without reloading the model
+
+`StreamingChunk` carries: `text`, `thinking` (reasoning channel — never mixed into `text`),
+`metrics` (`PerformanceMetrics`), an `isFinal` flag, `finishReason` (set on the final chunk —
+`'stop'` vs `'length'`; `isTruncated` is the shorthand for hitting the `nPredict` budget), and
+`toolCalls` (final chunk only).
 
 ### Configuration
 
@@ -65,27 +74,187 @@ All three accept an optional `images` parameter for vision models.
 | Parameter | Default | Description |
 |---|---|---|
 | `temp` | 0.72 | Sampling temperature |
-| `nGpuLayers` | 64 | GPU layers offloaded |
+| `nGpuLayers` | auto (999) | GPU layers offloaded; `0` forces CPU-only |
 | `nCtx` | 8192 | Context window in tokens |
-| `nBatch` | 4096 | Batch size |
-| `nThreads` | 6 | CPU threads |
+| `nBatch` | auto | `min(nCtx, 2048)`, resolved by llama.cpp |
+| `nThreads` | auto | llama.cpp's thread heuristic |
 | `topK` | 64 | Top-K sampling |
 | `topP` | 0.95 | Top-P sampling |
 | `penaltyRepeat` | 1.1 | Repetition penalty |
+| `presencePenalty` | 0.0 | Presence penalty |
 | `mmprojPath` | null | Path to mmproj GGUF for vision |
 | `chatTemplate` | null | Custom Jinja chat template string; `null` uses the model's embedded template |
+| `enableThinking` | true | Whether reasoning models may emit a thinking block |
+| `thinkingBudget` | null | Caps tokens per reasoning block (`ThinkingBudget`) |
+| `flashAttention` | auto | Required by a quantized KV cache |
+| `cacheTypeK` / `cacheTypeV` | f16 | `q8_0` halves / `q4_0` quarters KV memory — the largest memory win on a phone |
+| `speculativeDecoding` | null | `SpeculativeDecodingConfig` (n-gram, MTP, draft model, …) |
+
+`LlmConfig.validate()` rejects combinations llama.cpp refuses (currently: a quantized KV cache
+with flash attention disabled) and is called by both backends before loading, so the failure is
+readable instead of surfacing from inside the worker isolate.
+
+`lib/src/core/model_params_builder.dart` maps `LlmConfig` onto llamadart's `ModelParams` /
+`GenerationParams` and builds the chat messages — one place to wire a new knob.
 
 ### Prompt Format
 
 Override the model's built-in chat template via `LlmConfig.chatTemplate` (a raw Jinja/GGUF template string). When `null` the model file's embedded template is used automatically — no manual format selection required.
 
-### System message support
+### System messages
 
-`LlmModelIsolated` decodes `\x01SYS\x01`/`\x01USR\x01` markers in `sendPrompt*` calls to pass proper `[system, user]` messages to the underlying engine. `RagPipeline` uses this to inject the RAG system prompt.
+Pass `systemPrompt` to any `sendPrompt*` call and it becomes a real `LlamaChatRole.system`
+message, so the model's chat template places it where it expects instructions.
+`RagPipeline` uses this for its instructions (`RagPipeline.defaultSystemPrompt`); its
+`promptTemplate` now holds only `{context}` / `{question}`. Override either through
+`RagEngine(systemPrompt:, promptTemplate:)`.
 
 ### Performance Metrics
 
-`PerformanceMetrics` (`lib/src/core/performance_metrics.dart`) tracks `tokensGenerated`, `durationMs`, `tokensPerSecond`, `msPerToken`. Counts are exact: each llamadart callback emits one token, incremented via `+= 1` in the streaming loop.
+`PerformanceMetrics` (`lib/src/core/performance_metrics.dart`) tracks `tokensGenerated`,
+`durationMs`, `tokensPerSecond`, `msPerToken`, plus `promptTokens`, `promptEvalMs`, `evalMs`
+and an `isExact` flag.
+
+Metrics emitted **while streaming** are estimates (`isExact == false`): they count stream
+chunks, and llamadart batches chunks according to `streamBatchTokenThreshold` /
+`streamBatchByteThreshold`, so a chunk is not necessarily a token. The **final** chunk carries
+llama.cpp's own counters, read through `LlamaEngine.getPerformanceContext()` — see
+`lib/src/core/backend_perf.dart`. `tokensPerSecond` is then decode throughput and excludes
+prompt ingestion.
+
+### Conversations (multi-turn)
+
+`LocalModel.startConversation()` returns a `Conversation` — history, context budgeting and the
+tool loop. The one-shot `sendPrompt*` methods stay stateless; the app picks explicitly, so a RAG
+answer or a classification never inherits an earlier turn.
+
+The session is llamadart's `ChatSession`, which holds a `LlamaEngine` and therefore cannot cross
+the port — it lives **inside the worker**, addressed by an opaque id. All of the logic lives in
+`lib/src/core/session_ops.dart` (`SessionRegistry`), which the in-process backend calls directly
+and the isolate backend reaches through `session` / `session_turn` messages, so the two backends
+cannot drift. `ChatSessionLike` is the seam that makes it all testable without a model.
+
+What the registry has to compensate for in `ChatSession`:
+
+- **Trimming is silent and destructive.** `_enforceContextLimit` permanently deletes the oldest
+  turns, and if the prompt still does not fit it logs a warning and sends it anyway. The registry
+  diffs history by identity around each turn and reports what vanished as
+  `ConversationChunk.dropped` and on the broadcast `Conversation.trims`;
+  `ContextOverflowPolicy.fail` turns "still does not fit" into an exception raised before any
+  output is consumed.
+- **Cancelling skips the assistant turn.** `ChatSession.create` appends it after its last yield,
+  so cancelling or erroring leaves a user message with no reply and the next turn renders two
+  user messages in a row. There is no removal API, so the registry appends what was produced.
+- **One tool result per message.** llamadart's message JSON keeps only the first, so
+  `submitToolResults` fans several results out into several messages.
+- **System messages in history are ignored.** Only the `systemPrompt` field reaches the model, so
+  `restore` routes a system message there instead of losing it.
+- **Reasoning in history** is stripped unless `keepThinkingInHistory: true`, because whether a
+  model's template renders `reasoning_content` is model-dependent and re-sending it costs context
+  every turn. `ChatSession` keeps history private, so stripping means reset + re-add.
+
+Turns are serialized across every conversation *and* one-shot generation on a model: chat runs on
+sequence 0 of one context. `maxParallelSequences` sizes the KV cache for batched embeddings, not
+for chat, so raising it buys no concurrency.
+
+`LlmChatMessage` (`lib/src/core/chat_message.dart`) is the plugin's own history type —
+llamadart's `LlamaChatMessage.toJson()` is prompt-shaped and lossy. Note the name: `ChatMessage`
+was already taken by the cloud provider API (`lib/src/api/chat_models.dart`). Attachments travel
+with the object but are not written by `toJson()`.
+
+### Tool calling and structured output
+
+Declare tools per request through `GenerationOverrides.tools` (`LlmTool` — name, description,
+`ToolParam` schema), with `toolChoice`, `parallelToolCalls` and `responseFormat`. Declaring tools
+constrains decoding to their schema and lets llamadart parse the call out of whatever envelope
+the model's chat template uses.
+
+`LlmTool` deliberately has **no handler**: generation runs in a worker isolate, so your code
+cannot (and should not) execute there. Completed calls arrive as data on
+`StreamingChunk.toolCalls` (final chunk only) — llamadart streams a call's name and arguments as
+fragments, and `ToolCallAccumulator` (`lib/src/core/tools.dart`) reassembles them so callers do
+not have to.
+
+### Reasoning (thinking)
+
+`enableThinking` is on by default in llamadart. Reasoning arrives on `StreamingChunk.thinking`,
+never mixed into `text`, and both backends emit it as its own chunk. `sendPromptComplete` returns
+only the answer text; use `sendPromptResult` when the reasoning matters.
+
+`LlmConfig.thinkingBudget` caps tokens per reasoning block. **llamadart reports nothing when that
+budget is hit** — it is enforced by a native sampler that forces the closing tag, with no event,
+flag or distinct finish reason reaching Dart. `GenerationResult.thinkingTruncated` is therefore
+derived: exact when `ThinkingBudget.forcedMessage` is set (the forced text either terminates the
+reasoning or it does not), and otherwise inferred from `thinkingTokens` reaching the budget,
+which a model that stops right at the limit would also trigger. Set `forcedMessage` when the flag
+has to be trusted.
+
+Note: `thinkingBudget` with any image or audio attachment throws `LlamaUnsupportedException` —
+the reasoning sampler is text-only.
+
+### Structured output
+
+`LlmStructuredOutput<T>` (`lib/src/core/structured_output.dart`) wraps llamadart's builder:
+`jsonObject`, `jsonSchema`, `jsonValueSchema`. Use it through
+`LocalModel.sendPromptStructured(prompt, output: …)`, or apply `parseStructured(output)` to any
+`Stream<StreamingChunk>`.
+
+Decoding runs on the **calling** isolate: only `responseFormat` (a plain map) is sent to the
+worker. Closures *are* sendable between isolates of one group, so this is a choice, not a
+constraint — running caller-supplied decoding inside the inference worker is not something the
+plugin should decide.
+
+Failures are separated by when they are knowable: an unconvertible schema throws
+`LlamaUnsupportedException` at construction; a backend that cannot constrain decoding throws at
+stream start; truncation at the token budget is reported as truncation rather than as a JSON
+parse offset; bad JSON, schema mismatches and throwing decoders become `LlamaInferenceException`.
+
+### Engine operations beyond generation
+
+`LocalModel` also exposes, on both backends:
+
+- **Tokenization** — `tokenize`, `detokenize`, `countTokens`, `contextSize`, `metadata`
+- **KV-cache state** — `supportsStatePersistence`, `saveState(path, tokens:)`,
+  `loadState(path)`: resume a long conversation without paying prompt ingestion again
+- **Runtime LoRA** — `setLora`, `removeLora`, `clearLoras` (previously load-time only)
+- **Diagnostics** — `diagnostics()` → `ModelDiagnostics`: which backend actually won, how many
+  layers really reached the GPU, GGUF file type, vision/audio support, VRAM
+
+The isolate backend reaches these through a `call` message; both backends share the dispatch in
+`lib/src/core/engine_rpc.dart`, so a new operation is wired once.
+
+Not wired: `loadModelSource` / `loadModelFromUrl` and llamadart's download manager. Model
+downloading needs app-level cache-directory decisions (and apps typically already have a
+downloader with resume and notifications), so `loadModel` still takes a local path.
+
+### Errors
+
+llamadart's typed exceptions survive the worker isolate boundary: workers encode them with
+`encodeError` and the main isolate rebuilds the same class with `decodeError`
+(`lib/src/core/llm_errors.dart`). So `LlamaBackendInitializationException` ("GPU backend
+failed, retry on CPU") stays distinguishable from `LlamaModelException` ("model file is
+corrupt") and `LlamaUnsupportedException` (e.g. aLoRA adapters, hard-failing since llamadart
+0.8.22). The hierarchy is re-exported from `lib/mt_llmkit.dart`.
+
+### Lifecycle
+
+The worker isolate is spawned with a llama.cpp backend but **no model**: loading is a message
+(`load`), so `unload()` + `loadModel()` swaps models without respawning the isolate or
+re-initializing the backend. `LocalModel.loadModel` does that swap for you when a model is
+already loaded. Inside the worker, `load` / `unload` / `dispose` and generation share one
+`Future` queue — llamadart's model-lifecycle mutex is non-reentrant and throws
+`LlamaStateException` on overlap — while `unload` and `dispose` first abort in-flight generation
+*outside* the queue so they interrupt it instead of waiting behind it.
+
+`clean()` works on both backends and is `Future<void>`. llama.cpp has no call that forgets the
+prompt cache on the spot, so it raises a flag and the next generation runs with
+`reusePromptPrefix: false`, which clears context memory and the cached prompt tokens before
+ingesting. It is **not** on `LlmInterface` — it is not part of "send a prompt".
+
+`dispose()` is `Future<void>` everywhere (`LlmInterface`, `LocalModel`, both backends,
+`RagEngine`) and **must be awaited**. Isolate-backed implementations wait for the worker to
+acknowledge that llama.cpp released its native handles (5 s timeout) before killing the
+isolate.
 
 ### Cloud AI Providers
 
@@ -102,13 +271,44 @@ Use `AIChatProviderFactory.create(AIChatProviderType)` to instantiate. Exception
 - `LlamaEmbeddingProvider` — standalone embed isolate (CPU-only)
 - `LocalModel` — generation isolate (GPU configured)
 
-`RagPipeline` injects system + user content as `\x01SYS\x01{system}\x01USR\x01{question}` via `sendPromptStream`.
+Both embedding paths use llamadart's native batch call (`embedBatch`) instead of one isolate
+round-trip per chunk, size chunks with the model's tokenizer instead of a character count
+(`lib/src/rag/embeddings/embed_worker_ops.dart` — a fixed 2000-character cut is not 512 tokens,
+so long chunks used to overrun the encoder), and read the embedding width from GGUF metadata
+rather than spending an inference pass on a probe string. `RagPipeline.embedBatchSize` (default
+16) trades ingestion speed against progress granularity.
+
+`RagPipeline` calls `sendPromptStream(augmentedPrompt, systemPrompt: systemPrompt)`, so the
+instructions travel as a real `system` message and only the context + question go into the user
+turn.
 
 ### Native Libraries
 
-- Android: pre-compiled `.so` files in `android/src/main/jniLibs/{arm64-v8a,x86_64}/`
-- iOS: native frameworks via CocoaPods (`ios/llmcpp.podspec`)
-- Loading managed transparently by `llamadart` via Dart Build Hooks
+- Android: `.so` files downloaded and bundled by llamadart's Dart build hook (this repo ships no
+  `jniLibs`); ABIs limited to `arm64-v8a` and `x86_64` in `android/build.gradle`
+- iOS: llama.cpp XCFramework linked through **Swift Package Manager** by the companion package
+  `llamadart_llama_cpp_flutter`, which the **app** must declare in its own `pubspec.yaml`
+  (llamadart's `hook/build.dart` reads the consumer pubspec and then emits its asset as
+  `LookupInProcess()` instead of a bundled dylib)
+- Without that companion package llamadart falls back to native assets, and Flutter wraps the
+  dylib in a `llamadart.framework` whose `Info.plist` hardcodes `MinimumOSVersion 13.0`
+  (flutter/flutter#145104) while the binary needs 16.4 → App Store rejects with **ITMS-90208**.
+  A correct release build contains **no** `llamadart.framework`, only `llama.framework` +
+  `llamadart-llama-cpp-flutter.framework`. Verify only after `flutter clean` — Flutter never prunes
+  `Runner.app/Frameworks`, so a stale `llamadart.framework` from a pre-migration build survives
+  incremental builds and would still be shipped.
+
+### iOS plugin packaging
+
+Dual: Swift Package Manager (`ios/mt_llmkit/Package.swift`, product `mt-llmkit`) **and** CocoaPods
+(`ios/mt_llmkit.podspec`) over the same sources in `ios/mt_llmkit/Sources/mt_llmkit/`. Both declare
+iOS 16.4.
+
+Gotcha: for the **example app** Flutter adds the plugin as a local SwiftPM package override, and
+the override identity is the basename of the plugin's root directory. The checkout directory must
+therefore be named `mt_llmkit`; from a directory named otherwise, `flutter build ios` fails with
+`unable to override package 'mt_llmkit' because its identity '<dir>' doesn't match override's
+identity (directory name) 'mt_llmkit'`. Consuming apps are unaffected (no override is added).
 
 ## Test Infrastructure
 

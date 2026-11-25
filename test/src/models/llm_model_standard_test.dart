@@ -12,9 +12,9 @@ void main() {
       model = LlmModelStandard(const LlmConfig());
     });
 
-    tearDown(() {
+    tearDown(() async {
       if (model.isInitialized && !model.isDisposed) {
-        model.dispose();
+        await model.dispose();
       }
     });
 
@@ -41,15 +41,15 @@ void main() {
       expect(() => model.clean(), throwsStateError);
     });
 
-    test('should mark as disposed after dispose', () {
-      model.dispose();
+    test('should mark as disposed after dispose', () async {
+      await model.dispose();
 
       expect(model.isInitialized, false);
       expect(model.isDisposed, true);
     });
 
-    test('should throw StateError when loading after dispose', () {
-      model.dispose();
+    test('should throw StateError when loading after dispose', () async {
+      await model.dispose();
 
       expect(() => model.loadModel('/test/model.gguf'), throwsStateError);
     });
@@ -79,13 +79,13 @@ void main() {
       expect(model.isInitialized, false);
     });
 
-    test('should accept config with all numeric params', () {
+    test('should accept config with all numeric params', () async {
       const config = LlmConfig(nGpuLayers: 4, temp: 0.5, topP: 0.8);
 
       final model = LlmModelStandard(config);
 
       expect(model, isNotNull);
-      model.dispose();
+      await model.dispose();
     });
   });
 
@@ -96,23 +96,56 @@ void main() {
       model = LlmModelStandard(const LlmConfig());
     });
 
-    tearDown(() {
+    tearDown(() async {
       if (model.isInitialized && !model.isDisposed) {
-        model.dispose();
+        await model.dispose();
       }
     });
 
-    test('should handle dispose without initialization', () {
-      expect(() => model.dispose(), returnsNormally);
+    test('should handle dispose without initialization', () async {
+      await expectLater(model.dispose(), completes);
       expect(model.isDisposed, true);
     });
 
-    test('should not allow operations after dispose', () {
-      model.dispose();
+    test('should not allow operations after dispose', () async {
+      await model.dispose();
 
       expect(() => model.loadModel('/test.gguf'), throwsStateError);
       expect(() => model.sendPrompt('test'), throwsStateError);
       expect(() => model.clean(), throwsStateError);
+    });
+  });
+
+  group('LlmModelStandard - unload', () {
+    test('unload before a model is loaded is a no-op', () async {
+      final model = LlmModelStandard(const LlmConfig());
+
+      await expectLater(model.unload(), completes);
+      expect(model.isInitialized, false);
+      expect(model.isDisposed, false);
+
+      await model.dispose();
+    });
+
+    test('unload leaves the instance reusable, unlike dispose', () async {
+      final model = LlmModelStandard(const LlmConfig());
+      await model.unload();
+
+      // Still loadable: unload frees the model, not the backend.
+      expect(model.isDisposed, false);
+      expect(
+        () => model.loadModel('/nonexistent/model.gguf'),
+        throwsA(isA<FileSystemException>()),
+      );
+
+      await model.dispose();
+    });
+
+    test('unload after dispose throws', () async {
+      final model = LlmModelStandard(const LlmConfig());
+      await model.dispose();
+
+      expect(model.unload(), throwsStateError);
     });
   });
 }

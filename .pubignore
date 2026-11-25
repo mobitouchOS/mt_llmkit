@@ -1,2 +1,18 @@
-example/ios/Podfile.lock
-example/pubspec.lock
+# .pubignore replaces .gitignore for `dart pub publish`, so it has to repeat
+# the build outputs .gitignore already excludes, or they end up in the archive.
+*.lock
+build/
+.dart_tool/
+coverage/
+.idea/
+.DS_Store
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/ephemeral/
+**/ios/**/xcuserdata/
+**/android/.gradle/
+**/android/local.properties
+
+# Repository-only documents, not package documentation.
+CLAUDE.md
+docs/

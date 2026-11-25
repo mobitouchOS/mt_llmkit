@@ -4,6 +4,9 @@ import 'package:mt_llmkit/src/models/llm_model_base.dart';
 
 /// Mock implementation for testing purposes
 class MockLlmModel extends LlmModelBase {
+  @override
+  final LlmConfig config = const LlmConfig();
+
   bool _loadModelCalled = false;
   bool _sendPromptCalled = false;
   bool _disposeCalled = false;
@@ -29,7 +32,12 @@ class MockLlmModel extends LlmModelBase {
   }
 
   @override
-  Stream<String> sendPrompt(String prompt, {List<LlamaImageContent>? images}) {
+  Stream<String> sendPrompt(
+    String prompt, {
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
+  }) {
     checkInitialized();
     _sendPromptCalled = true;
     _lastPrompt = prompt;
@@ -39,7 +47,9 @@ class MockLlmModel extends LlmModelBase {
   @override
   Future<String> sendPromptComplete(
     String prompt, {
-    List<LlamaImageContent>? images,
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
   }) async {
     checkInitialized();
     _sendPromptCalled = true;
@@ -50,7 +60,9 @@ class MockLlmModel extends LlmModelBase {
   @override
   Stream<StreamingChunk> sendPromptStream(
     String prompt, {
-    List<LlamaImageContent>? images,
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
   }) async* {
     checkInitialized();
     _sendPromptCalled = true;
@@ -77,16 +89,72 @@ class MockLlmModel extends LlmModelBase {
   }
 
   @override
-  void dispose() {
+  Future<void> dispose() async {
     _disposeCalled = true;
     markAsDisposed();
   }
 
   @override
-  void clean() {
+  Future<Conversation> startConversation({
+    String? systemPrompt,
+    int? maxContextTokens,
+    List<LlmChatMessage>? history,
+    ContextOverflowPolicy overflowPolicy = ContextOverflowPolicy.allow,
+    bool keepThinkingInHistory = false,
+  }) async => throw UnsupportedError('no session');
+
+  @override
+  Future<void> unload() async {
+    markAsUnloaded();
+  }
+
+  @override
+  Future<void> clean({bool resetConversations = true}) async {
     checkInitialized();
     _cleanCalled = true;
   }
+
+  // Engine-backed operations are out of scope for these lifecycle tests.
+  @override
+  Future<List<int>> tokenize(String text, {bool addSpecial = true}) async =>
+      const [];
+
+  @override
+  Future<String> detokenize(List<int> tokens, {bool special = false}) async =>
+      '';
+
+  @override
+  Future<int> countTokens(String text) async => 0;
+
+  @override
+  Future<int> contextSize() async => 0;
+
+  @override
+  Future<Map<String, String>> metadata() async => const {};
+
+  @override
+  Future<bool> get supportsStatePersistence async => false;
+
+  @override
+  Future<bool> saveState(String path, {required List<int> tokens}) async =>
+      false;
+
+  @override
+  Future<List<int>> loadState(String path, {int? tokenCapacity}) async =>
+      const [];
+
+  @override
+  Future<void> setLora(String path, {double scale = 1.0}) async {}
+
+  @override
+  Future<void> removeLora(String path) async {}
+
+  @override
+  Future<void> clearLoras() async {}
+
+  @override
+  Future<ModelDiagnostics> diagnostics() async =>
+      throw UnsupportedError('MockLlmModel has no engine.');
 }
 
 void main() {
@@ -113,7 +181,7 @@ void main() {
 
     test('should mark as disposed after dispose', () async {
       await model.loadModel('/test/path');
-      model.dispose();
+      await model.dispose();
 
       expect(model.isInitialized, false);
       expect(model.isDisposed, true);
@@ -160,21 +228,21 @@ void main() {
 
     test('should throw StateError when loading after dispose', () async {
       await model.loadModel('/test/path');
-      model.dispose();
+      await model.dispose();
 
       expect(() => model.loadModel('/test/path2'), throwsStateError);
     });
 
     test('should throw StateError when sending prompt after dispose', () async {
       await model.loadModel('/test/path');
-      model.dispose();
+      await model.dispose();
 
       expect(() => model.sendPrompt('test'), throwsStateError);
     });
 
     test('should throw StateError when cleaning after dispose', () async {
       await model.loadModel('/test/path');
-      model.dispose();
+      await model.dispose();
 
       expect(() => model.clean(), throwsStateError);
     });
@@ -192,7 +260,7 @@ void main() {
       final stream2 = model.sendPrompt('prompt2');
       await stream2.first;
 
-      model.dispose();
+      await model.dispose();
       expect(model.isDisposed, true);
     });
   });

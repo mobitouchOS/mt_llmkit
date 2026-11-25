@@ -94,14 +94,27 @@ class RagPipeline {
   final TextChunker chunker;
   final String promptTemplate;
 
+  /// Instructions sent as a real `system` message, so the model's chat
+  /// template places them where it expects instructions rather than treating
+  /// them as part of the user's question.
+  final String systemPrompt;
+
+  /// How many chunks are embedded per batch during ingestion. Larger batches
+  /// are faster; smaller ones report progress more often.
+  final int embedBatchSize;
+
+  /// Default RAG instructions, sent as the system message.
+  static const String defaultSystemPrompt =
+      'Answer the question using only the context the user provides. '
+      'If the answer cannot be derived from that context, say so explicitly — '
+      'do not make up information.';
+
   /// Default RAG prompt template with `{context}` and `{question}` placeholders.
   ///
   /// Context is built from the `topK` best-matching chunks,
   /// separated by `---`.
   static const String defaultPromptTemplate =
-      'Based on the context below, answer the question. '
-      'If the answer cannot be derived from the context, say so explicitly — do not make up information.\n'
-      '\nCONTEXT:\n{context}\n\nQUESTION: {question}\n\nANSWER:';
+      'CONTEXT:\n{context}\n\nQUESTION: {question}\n\nANSWER:';
 
   RagPipeline({
     required this.embeddingProvider,
@@ -109,8 +122,11 @@ class RagPipeline {
     required this.generationPlugin,
     TextChunker? chunker,
     String? promptTemplate,
+    String? systemPrompt,
+    this.embedBatchSize = 16,
   }) : chunker = chunker ?? const TextChunker(),
-       promptTemplate = promptTemplate ?? defaultPromptTemplate;
+       promptTemplate = promptTemplate ?? defaultPromptTemplate,
+       systemPrompt = systemPrompt ?? defaultSystemPrompt;
 
   // ── Ingestion ─────────────────────────────────────────────────────────────
 
@@ -143,17 +159,25 @@ class RagPipeline {
       currentPreview: 'Splitting into ${chunks.length} chunks...',
     );
 
-    // Step 2: embed each chunk
-    for (int i = 0; i < chunks.length; i++) {
-      final chunk = chunks[i];
-      chunk.embedding = await embeddingProvider.embed(chunk.text);
+    // Step 2: embed in batches — one native batch call beats one isolate
+    // round-trip per chunk, while still reporting progress often enough to
+    // drive a progress bar.
+    for (int start = 0; start < chunks.length; start += embedBatchSize) {
+      final end = (start + embedBatchSize).clamp(0, chunks.length);
+      final batch = chunks.sublist(start, end);
 
+      final embeddings = await embeddingProvider.embedBatch([
+        for (final chunk in batch) chunk.text,
+      ]);
+      for (int i = 0; i < batch.length; i++) {
+        batch[i].embedding = embeddings[i];
+      }
+
+      final last = batch.last.text;
       yield RagIngestionProgress(
         totalChunks: chunks.length,
-        embeddedChunks: i + 1,
-        currentPreview: chunk.text.length > 60
-            ? chunk.text.substring(0, 60)
-            : chunk.text,
+        embeddedChunks: end,
+        currentPreview: last.length > 60 ? last.substring(0, 60) : last,
       );
     }
 
@@ -210,6 +234,7 @@ class RagPipeline {
       yield* generationPlugin.sendPromptStream(
         'No relevant information was found in the knowledge base for the question: "$question". '
         'Inform the user that the knowledge base does not contain relevant data.',
+        systemPrompt: systemPrompt,
       );
       return;
     }
@@ -228,7 +253,10 @@ class RagPipeline {
         .replaceAll('{question}', question);
 
     // Step 4: generate streaming response
-    yield* generationPlugin.sendPromptStream(augmentedPrompt);
+    yield* generationPlugin.sendPromptStream(
+      augmentedPrompt,
+      systemPrompt: systemPrompt,
+    );
   }
 
   /// Retrieves relevant chunks for [question] without generating a response.
@@ -263,6 +291,6 @@ class RagPipeline {
   /// (and persisted to disk if autoSavePath was set).
   Future<void> dispose() async {
     await embeddingProvider.dispose();
-    generationPlugin.dispose();
+    await generationPlugin.dispose();
   }
 }

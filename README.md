@@ -1,7 +1,7 @@
 # mt_llmkit
 
-![Flutter](https://img.shields.io/badge/Flutter-%3E%3D3.32-02569B?logo=flutter)
-![Dart](https://img.shields.io/badge/Dart-%5E3.8-0175C2?logo=dart)
+![Flutter](https://img.shields.io/badge/Flutter-%3E%3D3.38-02569B?logo=flutter)
+![Dart](https://img.shields.io/badge/Dart-%3E%3D3.10.7-0175C2?logo=dart)
 ![Platform](https://img.shields.io/badge/platform-iOS%20%7C%20Android-lightgrey)
 ![Stability](https://img.shields.io/badge/stability-beta-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -13,11 +13,15 @@ A Flutter plugin for running Large Language Models (LLMs) locally on Android and
 ## Table of Contents
 
 1. [Installation](#installation)
+   - [Platform requirements](#platform-requirements)
+   - [iOS setup](#ios-setup)
 2. [Local LLM Inference (GGUF)](#local-llm-inference-gguf)
    - [Quick start](#quick-start)
    - [Backends](#backends)
+   - [Model lifecycle](#model-lifecycle)
    - [Configuration](#configuration)
    - [Generation methods](#generation-methods)
+   - [Conversations](#conversations)
    - [Prompt format](#prompt-format)
    - [Performance metrics](#performance-metrics)
 3. [Vision (Multimodal)](#vision-multimodal)
@@ -48,7 +52,11 @@ Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  mt_llmkit: ^0.0.1-beta.1
+  mt_llmkit: ^0.1.0-beta.1
+
+  # iOS/macOS only: links llama.cpp's Apple XCFramework through Swift Package Manager.
+  # Must be declared here, in the *app's* pubspec — llamadart's build hook reads it.
+  llamadart_llama_cpp_flutter: ^0.0.17
 ```
 
 Then run:
@@ -60,7 +68,51 @@ flutter pub get
 Import the library:
 
 ```dart
-import 'package:mt_llmkit/llmcpp.dart';
+import 'package:mt_llmkit/mt_llmkit.dart';
+```
+
+### Platform requirements
+
+| | Minimum |
+|---|---|
+| iOS | **16.4** (`IPHONEOS_DEPLOYMENT_TARGET`, and `platform :ios, '16.4'` if you use CocoaPods) |
+| Flutter | **3.38.0** (required by llamadart 0.8.x) |
+| Android | arm64-v8a or x86_64 |
+
+The iOS floor comes from llamadart's prebuilt llama.cpp runtime, which is built for iOS 16.4.
+`ios/mt_llmkit.podspec` and `ios/mt_llmkit/Package.swift` both declare it, so the incompatibility
+is reported at integration time rather than at runtime.
+
+### iOS setup
+
+On iOS the native runtime is linked as an XCFramework through **Swift Package Manager**, which is
+enabled by default in Flutter 3.38+. Two things are required in your app:
+
+1. `llamadart_llama_cpp_flutter` in the app's `pubspec.yaml` (see above).
+2. Swift Package Manager **not** disabled — i.e. no
+   `flutter: config: enable-swift-package-manager: false` in the app's `pubspec.yaml`.
+   CocoaPods can stay: apps mixing SwiftPM packages with pods (Firebase and friends) are supported.
+
+If either is missing, llamadart falls back to shipping its dylib as a Flutter *native asset*.
+Flutter then wraps it in a framework whose `Info.plist` declares a hardcoded
+`MinimumOSVersion` of `13.0` ([flutter/flutter#145104](https://github.com/flutter/flutter/issues/145104))
+while the binary requires 16.4, and App Store validation rejects the upload:
+
+```
+ITMS-90208: Invalid Bundle - The bundle Runner.app/Frameworks/llamadart.framework
+does not support the minimum OS Version specified in the Info.plist.
+```
+
+When migrating an existing app, run `flutter clean` first. Flutter does not prune
+`Runner.app/Frameworks`, so a stale `llamadart.framework` from an earlier build stays in the bundle
+— and would be uploaded — even though the new build no longer produces one.
+
+You can confirm a correct setup on a release build — there must be **no** `llamadart.framework`:
+
+```bash
+ls build/ios/iphoneos/Runner.app/Frameworks
+# App.framework  Flutter.framework  llama.framework
+# llamadart-llama-cpp-flutter.framework  objective_c.framework
 ```
 
 ---
@@ -93,7 +145,7 @@ model.dispose();
 | Backend | Class | When to use |
 |---|---|---|
 | `ModelBackend.isolate` *(default)* | `LlmModelIsolated` | Production. Runs in a Dart Isolate — no UI jank. Required when loading multiple models (e.g. RAG). |
-| `ModelBackend.inProcess` | `LlmModelStandard` | Lighter startup cost. Supports `clean()` to reset context without reloading the model. |
+| `ModelBackend.inProcess` | `LlmModelStandard` | Lighter startup cost. Runs on the calling thread. |
 
 ```dart
 // Isolate backend (default)
@@ -101,10 +153,26 @@ final model = LocalModel(backend: ModelBackend.isolate);
 
 // In-process backend
 final model = LocalModel(backend: ModelBackend.inProcess);
-model.clean(); // reset context — only available with inProcess
 ```
 
-> **Note:** `clean()` throws `UnsupportedError` when called on the `isolate` backend.
+### Model lifecycle
+
+```dart
+await model.loadModel(pathA);
+await model.unload();          // frees the model, keeps the worker + backend
+await model.loadModel(pathB);  // no isolate spawn, no llama.cpp re-init
+
+await model.clean();           // drop the reused prompt prefix and its KV cache
+await model.dispose();         // tear everything down
+```
+
+`loadModel` on a model that already has one loaded does the `unload` for you, so switching
+models never respawns the worker isolate.
+
+`clean()` works on **both** backends. llama.cpp has no call that forgets the prompt cache on the
+spot, so the next generation runs with `reusePromptPrefix: false`, which clears context memory
+and the cached prompt tokens before ingesting — nothing is recomputed until then, so calling it
+is free.
 
 ### Configuration
 
@@ -133,6 +201,8 @@ Three methods are available on `LocalModel` (and any `LlmInterface` implementati
 | `sendPrompt(prompt)` | `Stream<String>` | Raw token stream. Lowest overhead. |
 | `sendPromptComplete(prompt)` | `Future<String>` | Waits for the full response and returns it as a single string. |
 | `sendPromptStream(prompt)` | `Stream<StreamingChunk>` | **Recommended.** Token stream with live performance metrics. |
+| `sendPromptResult(prompt)` | `Future<GenerationResult>` | Everything the generation produced: text, reasoning, tool calls, finish reason, metrics. |
+| `sendPromptStructured(prompt, output:)` | `Future<LlmStructuredResult<T>>` | JSON constrained to a schema, decoded into `T`. |
 
 ```dart
 // 1. Raw token stream
@@ -158,10 +228,102 @@ model.sendPromptStream('Hello').listen((chunk) {
 | Field | Type | Description |
 |---|---|---|
 | `text` | `String` | The generated text fragment. |
+| `thinking` | `String?` | Reasoning, on its own chunks. Never mixed into `text`. |
 | `isFinal` | `bool` | `true` on the last chunk of the response. |
-| `metrics` | `PerformanceMetrics?` | Available on every chunk; most useful on the final one. |
+| `finishReason` | `String?` | Final chunk only: `'stop'` or `'length'`. `isTruncated` is the shorthand. |
+| `toolCalls` | `List<LlmToolCall>` | Final chunk only, when tools were declared. |
+| `metrics` | `PerformanceMetrics?` | Available on every chunk; exact on the final one (`isExact`). |
 
-`PerformanceMetrics` fields: `tokensGenerated`, `durationMs`, `tokensPerSecond`, `msPerToken`.
+`PerformanceMetrics` fields: `tokensGenerated`, `durationMs`, `tokensPerSecond`, `msPerToken`,
+`promptTokens`, `promptEvalMs`, `evalMs`, `isExact`.
+
+### Conversations
+
+`sendPrompt*` is stateless — every call is a fresh exchange. For a chat, open a conversation:
+
+```dart
+final chat = await model.startConversation(
+  systemPrompt: 'You are a concise assistant.',
+);
+
+await for (final chunk in chat.send('What is the capital of Poland?')) {
+  stdout.write(chunk.text);
+}
+
+// The model sees the previous turn.
+final follow = await chat.sendComplete('And its population?');
+print(follow.text);
+
+await chat.close();
+```
+
+History lives with the model and is trimmed as it approaches the context window. That trim is
+**permanent** — the oldest turns are gone — so it is reported rather than silent:
+
+```dart
+chat.trims.listen((event) {
+  print('Dropped ${event.dropped.length} older messages to make room.');
+});
+```
+
+Pass `overflowPolicy: ContextOverflowPolicy.fail` to get a `LlmContextOverflowException` instead
+of an answer built on a prompt the model could not fully see.
+
+`chat.history()` returns `List<LlmChatMessage>` (JSON-serializable) and `chat.restore(...)` puts
+it back, so a conversation can be persisted and resumed.
+
+#### Tool calling
+
+```dart
+final tools = [
+  const LlmTool(
+    name: 'get_weather',
+    description: 'Current weather for a city',
+    parameters: [],
+  ),
+];
+
+var turn = await chat.sendComplete(
+  'What is the weather in Kraków?',
+  overrides: GenerationOverrides(tools: tools),
+);
+
+while (turn.needsToolResults) {
+  final results = [
+    for (final call in turn.toolCalls)
+      ToolResult.forCall(call, await runTool(call)),
+  ];
+  turn = await chat.submitToolResultsComplete(results);
+}
+
+print(turn.text);
+```
+
+Tools are declarations only — `LlmTool` carries no handler. Generation runs in a worker isolate,
+so your tool code runs where your app's state and plugins actually are.
+
+#### Structured output
+
+```dart
+final output = LlmStructuredOutput.jsonSchema(
+  schema: {
+    'type': 'object',
+    'properties': {'city': {'type': 'string'}},
+    'required': ['city'],
+  },
+  decoder: (json) => json['city'] as String,
+);
+
+final result = await model.sendPromptStructured(
+  'Which city is the capital of Poland?',
+  output: output,
+);
+print(result.value);
+```
+
+The schema constrains decoding, so the model cannot emit anything that would not parse. A schema
+llamadart cannot turn into a grammar is rejected when you build the `LlmStructuredOutput`, not
+mid-generation.
 
 ### Prompt format
 

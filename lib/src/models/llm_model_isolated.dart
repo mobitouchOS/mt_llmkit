@@ -5,161 +5,273 @@ import 'dart:isolate';
 
 import 'package:llamadart/llamadart.dart';
 
+import '../core/backend_perf.dart';
+import '../core/chat_message.dart';
+import '../core/conversation.dart';
+import '../core/conversation_types.dart';
+import '../core/generation_event.dart';
+import '../core/generation_overrides.dart';
 import '../core/llm_config.dart';
+import '../core/engine_rpc.dart';
+import '../core/llm_errors.dart';
+import '../core/model_diagnostics.dart';
+import '../core/model_params_builder.dart';
+import '../core/session_ops.dart';
 import '../core/performance_metrics.dart';
 import '../core/streaming_result.dart';
+import '../core/tools.dart';
 import 'llm_model_base.dart';
+
+/// How long [LlmModelIsolated.dispose] waits for the worker to confirm that
+/// llama.cpp released its native handles before the isolate is killed.
+const Duration _disposeTimeout = Duration(seconds: 5);
 
 // ── Worker Isolate entry point ─────────────────────────────────────────────
 
 Future<void> _llamaIsolateWorkerMain(Map<String, dynamic> args) async {
-  final String modelPath = args['modelPath'] as String;
-  final String? mmprojPath = args['mmprojPath'] as String?;
-  final int contextSize = args['contextSize'] as int;
-  final int gpuLayers = args['gpuLayers'] as int;
-  final int batchSize = args['batchSize'] as int;
-  final int numberOfThreads = args['numberOfThreads'] as int;
-  final int numberOfThreadsBatch = args['numberOfThreadsBatch'] as int;
-  final int microBatchSize = args['microBatchSize'] as int;
-  final int maxParallelSequences = args['maxParallelSequences'] as int;
-  final String? chatTemplate = args['chatTemplate'] as String?;
-  final List<LoraAdapterConfig> loras = (args['loras'] as List)
-      .cast<Map>()
-      .map(
-        (m) => LoraAdapterConfig(
-          path: m['path'] as String,
-          scale: (m['scale'] as num).toDouble(),
-        ),
-      )
-      .toList();
-  final int maxTokens = args['maxTokens'] as int;
-  final double temp = (args['temp'] as num).toDouble();
-  final int topK = args['topK'] as int;
-  final double topP = (args['topP'] as num).toDouble();
-  final double minP = (args['minP'] as num).toDouble();
-  final double penalty = (args['penalty'] as num).toDouble();
-  final int? seed = args['seed'] as int?;
-  final List<String> stopSequences = (args['stopSequences'] as List)
-      .cast<String>();
-  final String? grammar = args['grammar'] as String?;
-  final bool grammarLazy = args['grammarLazy'] as bool;
-  final List<GenerationGrammarTrigger> grammarTriggers =
-      (args['grammarTriggers'] as List)
-          .cast<Map>()
-          .map(
-            (m) => GenerationGrammarTrigger(
-              type: m['type'] as int,
-              value: m['value'] as String,
-              token: m['token'] as int?,
-            ),
-          )
-          .toList();
-  final List<String> preservedTokens = (args['preservedTokens'] as List)
-      .cast<String>();
-  final String grammarRoot = args['grammarRoot'] as String;
-  final bool reusePromptPrefix = args['reusePromptPrefix'] as bool;
-  final int streamBatchTokenThreshold =
-      args['streamBatchTokenThreshold'] as int;
-  final int streamBatchByteThreshold = args['streamBatchByteThreshold'] as int;
-  final String gpuBackendName = args['gpuBackend'] as String;
-  final GpuBackend gpuBackend = GpuBackend.values.firstWhere(
-    (e) => e.name == gpuBackendName,
-    orElse: () => GpuBackend.auto,
-  );
+  final LlmConfig config = args['config'] as LlmConfig;
   final SendPort mainPort = args['sendPort'] as SendPort;
 
+  // The worker starts with an engine but no model: loading is a message, so a
+  // model can be swapped with `unload` + `load` without respawning the isolate
+  // and re-initializing the llama.cpp backend.
   final engine = LlamaEngine(LlamaBackend());
-  try {
-    await engine.loadModel(
-      modelPath,
-      modelParams: ModelParams(
-        contextSize: contextSize,
-        gpuLayers: gpuLayers,
-        batchSize: batchSize,
-        numberOfThreads: numberOfThreads,
-        numberOfThreadsBatch: numberOfThreadsBatch,
-        microBatchSize: microBatchSize,
-        maxParallelSequences: maxParallelSequences,
-        loras: loras,
-        chatTemplate: chatTemplate,
-        preferredBackend: gpuBackend,
-      ),
-    );
-    if (mmprojPath != null) {
-      await engine.loadMultimodalProjector(mmprojPath);
-    }
-  } catch (e) {
-    mainPort.send({'type': 'error', 'message': '$e'});
-    return;
-  }
-
-  final genParams = GenerationParams(
-    maxTokens: maxTokens,
-    temp: temp,
-    topK: topK,
-    topP: topP,
-    minP: minP,
-    penalty: penalty,
-    seed: seed,
-    stopSequences: stopSequences,
-    grammar: grammar,
-    grammarLazy: grammarLazy,
-    grammarTriggers: grammarTriggers,
-    preservedTokens: preservedTokens,
-    grammarRoot: grammarRoot,
-    reusePromptPrefix: reusePromptPrefix,
-    streamBatchTokenThreshold: streamBatchTokenThreshold,
-    streamBatchByteThreshold: streamBatchByteThreshold,
-  );
+  final baseParams = buildGenerationParams(config);
 
   final receivePort = ReceivePort();
   mainPort.send({'type': 'ready', 'port': receivePort.sendPort});
 
   StreamSubscription<LlamaCompletionChunk>? genSubscription;
+  // Releases the queue slot held by the running generation. Cancellation does
+  // not fire onDone, so cancelling has to settle this explicitly.
+  void Function()? genComplete;
+
+  // llama.cpp has no "forget the prompt cache now" call. `clean` raises this
+  // flag and the next generation runs with `reusePromptPrefix: false`, which
+  // clears context memory and the cached prompt tokens before ingesting.
+  var pendingPrefixInvalidation = false;
+
+  // llamadart's model lifecycle mutex is non-reentrant: overlapping load /
+  // unload / dispose throw LlamaStateException. Generation joins the same
+  // queue so a load never lands mid-stream.
+  var queue = Future<void>.value();
+  Future<T> serialized<T>(Future<T> Function() action) {
+    final completer = Completer<T>();
+    queue = queue.then((_) async {
+      try {
+        completer.complete(await action());
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    return completer.future;
+  }
+
+  // Conversations live here, next to the engine: ChatSession holds a
+  // LlamaEngine, so it cannot be sent across the port.
+  final sessions = SessionRegistry(
+    createSession: (options) => RealChatSession(
+      ChatSession(
+        engine,
+        maxContextTokens: options.maxContextTokens,
+        systemPrompt: options.systemPrompt,
+      ),
+    ),
+    baseParams: () => baseParams,
+    enableThinkingDefault: () => config.enableThinkingDefault,
+    readPerf: () => readBackendPerf(engine),
+    // Conversation turns share the worker's queue with one-shot generation and
+    // with model lifecycle operations.
+    serialize: (action) => serialized(action),
+  );
+
+  // Stops an in-flight generation *outside* the queue, so unload and dispose
+  // interrupt it instead of waiting behind it.
+  Future<void> abortGeneration() async {
+    final sub = genSubscription;
+    genSubscription = null;
+    if (sub == null) return;
+    engine.cancelGeneration();
+    await sub.cancel();
+    genComplete?.call();
+  }
 
   await for (final message in receivePort) {
     if (message is! Map<String, dynamic>) continue;
 
     switch (message['type'] as String?) {
-      case 'generate':
-        final prompt = message['prompt'] as String;
-        final images = (message['images'] as List?)?.cast<LlamaImageContent>();
+      case 'load':
+        final replyPort = message['replyPort'] as SendPort;
+        try {
+          await serialized(() async {
+            await engine.loadModel(
+              message['modelPath'] as String,
+              modelParams: buildModelParams(config),
+            );
+            if (config.mmprojPath != null) {
+              await engine.loadMultimodalProjector(config.mmprojPath!);
+            }
+          });
+          replyPort.send({'type': 'ok'});
+        } catch (e) {
+          replyPort.send({'type': 'error', ...encodeError(e)});
+        }
+
+      case 'unload':
+        final replyPort = message['replyPort'] as SendPort;
+        await abortGeneration();
+        sessions.closeAll();
+        try {
+          await serialized(engine.unloadModel);
+          pendingPrefixInvalidation = false;
+          replyPort.send({'type': 'ok'});
+        } catch (e) {
+          replyPort.send({'type': 'error', ...encodeError(e)});
+        }
+
+      case 'clean':
+        pendingPrefixInvalidation = true;
+        if (message['resetConversations'] as bool? ?? true) {
+          sessions.resetAll();
+        }
+        (message['replyPort'] as SendPort?)?.send({'type': 'ok'});
+
+      case 'session':
+        final replyPort = message['replyPort'] as SendPort;
+        try {
+          replyPort.send({
+            'type': 'ok',
+            'value': dispatchSessionCall(
+              sessions,
+              message['method'] as String,
+              (message['args'] as Map?)?.cast<String, dynamic>() ?? const {},
+            ),
+          });
+        } catch (e) {
+          replyPort.send({'type': 'error', ...encodeError(e)});
+        }
+
+      case 'session_turn':
         final streamPort = message['streamPort'] as SendPort;
-
-        final msg = (images != null && images.isNotEmpty)
-            ? LlamaChatMessage.withContent(
-                role: LlamaChatRole.user,
-                content: [LlamaTextContent(prompt), ...images],
-              )
-            : LlamaChatMessage.fromText(role: LlamaChatRole.user, text: prompt);
-
-        genSubscription = engine
-            .create([msg], params: genParams)
+        sessions
+            .turn(message['id'] as String, message['request'] as TurnRequest)
             .listen(
-              (chunk) {
-                final text = chunk.choices.firstOrNull?.delta.content;
-                if (text != null) {
-                  streamPort.send({'type': 'token', 'text': text});
-                }
-              },
-              onDone: () {
-                streamPort.send({'type': 'done'});
-                genSubscription = null;
-              },
-              onError: (Object e) {
-                streamPort.send({'type': 'error', 'message': '$e'});
-                genSubscription = null;
-              },
+              (event) => streamPort.send({'type': 'event', 'event': event}),
+              onDone: () => streamPort.send({'type': 'done'}),
+              onError: (Object e) =>
+                  streamPort.send({'type': 'error', ...encodeError(e)}),
             );
 
+      case 'generate':
+        final prompt = message['prompt'] as String;
+        final systemPrompt = message['systemPrompt'] as String?;
+        final attachments = (message['attachments'] as List?)
+            ?.cast<LlamaContentPart>();
+        final overrides = message['overrides'] as GenerationOverrides?;
+        final streamPort = message['streamPort'] as SendPort;
+
+        var params = overrides?.applyTo(baseParams) ?? baseParams;
+        if (pendingPrefixInvalidation) {
+          params = params.copyWith(reusePromptPrefix: false);
+          pendingPrefixInvalidation = false;
+        }
+        final enableThinking =
+            overrides?.enableThinking ?? config.enableThinkingDefault;
+
+        // Not awaited: the queued action outlives this message handler, so the
+        // worker keeps servicing `cancel` and `unload` while tokens stream.
+        unawaited(
+          serialized(() async {
+            String? finishReason;
+            final toolCalls = ToolCallAccumulator();
+            final finished = Completer<void>();
+
+            void complete() {
+              if (!finished.isCompleted) finished.complete();
+            }
+
+            genComplete = complete;
+
+            genSubscription = engine
+                .create(
+                  buildMessages(
+                    prompt,
+                    systemPrompt: systemPrompt,
+                    attachments: attachments,
+                  ),
+                  params: params,
+                  enableThinking: enableThinking,
+                  tools: overrides?.tools
+                      ?.map((t) => t.toToolDefinition())
+                      .toList(),
+                  toolChoice: overrides?.toolChoice,
+                  parallelToolCalls: overrides?.parallelToolCalls ?? false,
+                  responseFormat: overrides?.responseFormat,
+                )
+                .listen(
+                  (chunk) {
+                    final choice = chunk.choices.firstOrNull;
+                    finishReason = choice?.finishReason ?? finishReason;
+
+                    final deltas = choice?.delta.toolCalls;
+                    if (deltas != null) toolCalls.add(deltas);
+
+                    final text = choice?.delta.content;
+                    if (text != null) {
+                      streamPort.send({'type': 'token', 'text': text});
+                    }
+                    final thinking = choice?.delta.thinking;
+                    if (thinking != null) {
+                      streamPort.send({'type': 'token', 'thinking': thinking});
+                    }
+                  },
+                  onDone: () async {
+                    genSubscription = null;
+                    streamPort.send({
+                      'type': 'done',
+                      if (finishReason != null) 'finishReason': finishReason,
+                      'perf': await readBackendPerf(engine),
+                      if (!toolCalls.isEmpty)
+                        'toolCalls': toolCalls
+                            .build()
+                            .map((c) => c.toMap())
+                            .toList(),
+                    });
+                    complete();
+                  },
+                  onError: (Object e) {
+                    genSubscription = null;
+                    streamPort.send({'type': 'error', ...encodeError(e)});
+                    complete();
+                  },
+                );
+
+            await finished.future;
+            genComplete = null;
+          }),
+        );
+
+      case 'call':
+        final replyPort = message['replyPort'] as SendPort;
+        try {
+          final value = await dispatchEngineCall(
+            engine,
+            message['method'] as String,
+            (message['args'] as Map?)?.cast<String, dynamic>() ?? const {},
+          );
+          replyPort.send({'type': 'ok', 'value': value});
+        } catch (e) {
+          replyPort.send({'type': 'error', ...encodeError(e)});
+        }
+
       case 'cancel':
-        genSubscription?.cancel();
-        genSubscription = null;
-        engine.cancelGeneration();
+        await abortGeneration();
 
       case 'dispose':
-        genSubscription?.cancel();
+        await abortGeneration();
+        sessions.closeAll();
         await engine.dispose();
+        (message['replyPort'] as SendPort?)?.send({'type': 'disposed'});
         receivePort.close();
         return;
     }
@@ -169,81 +281,275 @@ Future<void> _llamaIsolateWorkerMain(Map<String, dynamic> args) async {
 // ── LlmModelIsolated ───────────────────────────────────────────────────────
 
 class LlmModelIsolated extends LlmModelBase {
+  @override
   final LlmConfig config;
   Isolate? _isolate;
   SendPort? _workerPort;
 
+  /// Ports the isolate's death arrives on. Closed during [dispose].
+  ReceivePort? _exitPort;
+  ReceivePort? _errorPort;
+
+  /// Completes with an error the moment the worker dies unexpectedly.
+  ///
+  /// Every reply from the worker is awaited on a fresh `ReceivePort`, and a
+  /// dead isolate simply never sends — so without this, one crashed worker
+  /// (an out-of-memory kill on a multi-gigabyte model, a native abort) left
+  /// every load, call and turn waiting forever instead of reporting a failure
+  /// the caller could act on.
+  Completer<Never>? _workerDeath;
+
+  /// Whether a worker is supposed to be running right now.
+  ///
+  /// Distinct from `_workerPort != null`, which is still null during the
+  /// startup handshake — the window where a worker that dies before it
+  /// answers would otherwise go unnoticed. Cleared by [dispose], so a
+  /// deliberate teardown is never reported as a crash.
+  bool _workerExpectedAlive = false;
+
   LlmModelIsolated(this.config);
+
+  /// Never completes normally; completes with an error when the worker dies.
+  ///
+  /// Race a reply against this so nothing waits on a corpse. The loser of the
+  /// race stays subscribed, so the error is marked observed up front — an
+  /// unhandled one would reach the zone handler and take the host app down.
+  Future<Never> get _onWorkerDeath {
+    final death = _workerDeath ??= Completer<Never>();
+    death.future.ignore();
+    return death.future;
+  }
+
+  /// Marks the worker gone and fails everything waiting on it.
+  void _reportWorkerDeath(String reason) {
+    if (!_workerExpectedAlive) return; // already gone, or a clean dispose
+    _workerExpectedAlive = false;
+    _workerPort = null;
+    final death = _workerDeath;
+    if (death == null || death.isCompleted) return;
+    death.completeError(
+      LlamaInferenceException('The inference worker stopped', reason),
+      StackTrace.current,
+    );
+  }
 
   @override
   Future<void> loadModel(String localPath) async {
     checkNotDisposed();
+    config.validate();
 
     if (!File(localPath).existsSync()) {
       throw FileSystemException('File not found', localPath);
     }
 
-    final initPort = ReceivePort();
-    _isolate = await Isolate.spawn(_llamaIsolateWorkerMain, {
+    await _ensureWorker();
+    await _request('load', {
       'modelPath': localPath,
-      'mmprojPath': config.mmprojPath,
-      'contextSize': config.nCtxDefault,
-      'gpuLayers': config.nGpuLayersDefault,
-      'batchSize': config.nBatchDefault,
-      'numberOfThreads': config.nThreadsDefault,
-      'numberOfThreadsBatch': config.numberOfThreadsBatchDefault,
-      'microBatchSize': config.microBatchSizeDefault,
-      'maxParallelSequences': config.maxParallelSequencesDefault,
-      'chatTemplate': config.chatTemplate,
-      'loras': config.lorasDefault
-          .map((l) => {'path': l.path, 'scale': l.scale})
-          .toList(),
-      'maxTokens': config.nPredictDefault,
-      'temp': config.tempDefault,
-      'topK': config.topKDefault,
-      'topP': config.topPDefault,
-      'minP': config.minPDefault,
-      'penalty': config.penaltyRepeatDefault,
-      'seed': config.seed,
-      'stopSequences': config.stopSequencesDefault,
-      'grammar': config.grammar,
-      'grammarLazy': config.grammarLazyDefault,
-      'grammarTriggers': config.grammarTriggersDefault
-          .map(
-            (t) => {
-              'type': t.type,
-              'value': t.value,
-              if (t.token != null) 'token': t.token,
-            },
-          )
-          .toList(),
-      'preservedTokens': config.preservedTokensDefault,
-      'grammarRoot': config.grammarRootDefault,
-      'reusePromptPrefix': config.reusePromptPrefixDefault,
-      'streamBatchTokenThreshold': config.streamBatchTokenThresholdDefault,
-      'streamBatchByteThreshold': config.streamBatchByteThresholdDefault,
-      'gpuBackend': config.gpuBackendDefault.name,
-      'sendPort': initPort.sendPort,
-    }, debugName: 'llmcpp_LlamaWorker');
-
-    final initMsg = await initPort.first as Map<String, dynamic>;
-    initPort.close();
-
-    if (initMsg['type'] == 'error') {
-      _isolate?.kill();
-      _isolate = null;
-      throw Exception('LlmModelIsolated init failed: ${initMsg['message']}');
-    }
-
-    _workerPort = initMsg['port'] as SendPort;
+    }, context: 'Model load failed');
     markAsInitialized();
   }
 
-  // Bridges worker SendPort messages into a plain Stream<String>.
-  // No generation tracking — callers manage isGenerating state.
-  Stream<String> _rawWorkerStream(Map<String, dynamic> message) {
-    final controller = StreamController<String>();
+  /// Spawns the worker isolate on first use. The worker comes up with a
+  /// llama.cpp backend but no model, so later loads reuse it.
+  Future<void> _ensureWorker() async {
+    if (_workerPort != null) return;
+
+    final initPort = ReceivePort();
+
+    // Watched for the whole life of the worker, not just the handshake: a
+    // crash after startup is exactly the case that used to hang callers.
+    final exitPort = ReceivePort()
+      ..listen((_) => _reportWorkerDeath('the isolate exited'));
+    final errorPort = ReceivePort()
+      ..listen((dynamic error) => _reportWorkerDeath('$error'));
+    _exitPort = exitPort;
+    _errorPort = errorPort;
+    _workerExpectedAlive = true;
+    _workerDeath = null;
+
+    _isolate = await Isolate.spawn(
+      _llamaIsolateWorkerMain,
+      {'config': config, 'sendPort': initPort.sendPort},
+      debugName: 'mt_llmkit_LlamaWorker',
+      onExit: exitPort.sendPort,
+      onError: errorPort.sendPort,
+    );
+
+    // Startup can fail too — without the race a worker that dies before its
+    // handshake would hang the very first loadModel().
+    final initMsg =
+        await Future.any([initPort.first, _onWorkerDeath])
+            as Map<String, dynamic>;
+    initPort.close();
+    _workerPort = initMsg['port'] as SendPort;
+  }
+
+  /// Sends one request-reply message to the worker.
+  Future<void> _request(
+    String type,
+    Map<String, dynamic> args, {
+    required String context,
+  }) async {
     final replyPort = ReceivePort();
+    _workerPort!.send({...args, 'type': type, 'replyPort': replyPort.sendPort});
+
+    final Map<String, dynamic> reply;
+    try {
+      reply = ((await Future.any([replyPort.first, _onWorkerDeath])) as Map)
+          .cast<String, dynamic>();
+    } finally {
+      replyPort.close();
+    }
+
+    if (reply['type'] == 'error') {
+      throw decodeError(reply, context: context);
+    }
+  }
+
+  int _nextSessionId = 0;
+
+  @override
+  Future<Conversation> startConversation({
+    String? systemPrompt,
+    int? maxContextTokens,
+    List<LlmChatMessage>? history,
+    ContextOverflowPolicy overflowPolicy = ContextOverflowPolicy.allow,
+    bool keepThinkingInHistory = false,
+  }) async {
+    checkInitialized();
+    final id = 's${_nextSessionId++}';
+    await _sessionCall('open', {
+      'id': id,
+      'options': SessionOptions(
+        systemPrompt: systemPrompt,
+        maxContextTokens: maxContextTokens,
+        overflowPolicy: overflowPolicy,
+        keepThinkingInHistory: keepThinkingInHistory,
+      ),
+      if (history != null) 'history': history,
+    });
+    return Conversation(id, _IsolateConversationTransport(this));
+  }
+
+  /// One request-reply session operation on the worker's registry.
+  Future<Object?> _sessionCall(String method, Map<String, dynamic> args) async {
+    final workerPort = _workerPort;
+    if (workerPort == null) {
+      throw LlamaStateException(
+        'Conversation "$method" failed',
+        'the inference worker is not running',
+      );
+    }
+
+    final replyPort = ReceivePort();
+    workerPort.send({
+      'type': 'session',
+      'method': method,
+      'args': args,
+      'replyPort': replyPort.sendPort,
+    });
+
+    final Map<String, dynamic> reply;
+    try {
+      reply = ((await Future.any([replyPort.first, _onWorkerDeath])) as Map)
+          .cast<String, dynamic>();
+    } finally {
+      replyPort.close();
+    }
+
+    if (reply['type'] == 'error') {
+      throw decodeError(reply, context: 'Conversation "$method" failed');
+    }
+    return reply['value'];
+  }
+
+  /// Bridges one conversation turn from the worker's registry.
+  Stream<GenerationEvent> _sessionTurn(String id, TurnRequest request) {
+    final controller = StreamController<GenerationEvent>();
+    final replyPort = ReceivePort();
+
+    _workerPort!.send({
+      'type': 'session_turn',
+      'id': id,
+      'request': request,
+      'streamPort': replyPort.sendPort,
+    });
+
+    final sub = replyPort.listen((dynamic msg) {
+      if (msg is! Map<String, dynamic>) return;
+      switch (msg['type'] as String?) {
+        case 'event':
+          if (!controller.isClosed) {
+            controller.add(msg['event'] as GenerationEvent);
+          }
+        case 'done':
+          replyPort.close();
+          if (!controller.isClosed) controller.close();
+        case 'error':
+          replyPort.close();
+          if (!controller.isClosed) {
+            controller.addError(decodeError(msg, context: 'Conversation turn'));
+            controller.close();
+          }
+      }
+    });
+
+    // A dead worker sends neither 'done' nor 'error', so without this the
+    // stream would stay open forever and the caller would wait on a turn that
+    // can never arrive.
+    _onWorkerDeath.onError<Object>((error, stackTrace) {
+      replyPort.close();
+      if (!controller.isClosed) {
+        controller.addError(error, stackTrace);
+        controller.close();
+      }
+      throw error;
+    }).ignore();
+
+    controller.onCancel = () {
+      // Tell the worker to stop, not just stop listening to it. Closing the
+      // port alone left llama.cpp decoding the abandoned answer to the end of
+      // its token budget — minutes on a CPU-only model — with the next turn
+      // queued behind it and nothing on screen to explain the wait.
+      //
+      // Not awaited: `cancel` is dispatched outside the worker's turn queue,
+      // so it lands while the turn is still running, which is the point. It is
+      // also a no-op on an already-closed conversation. Failures are ignored —
+      // we are already tearing this turn down, and a worker that has gone away
+      // needs no telling.
+      unawaited(
+        _sessionCall('cancel', {'id': id}).catchError((Object _) => null),
+      );
+      sub.cancel();
+      replyPort.close();
+    };
+
+    return controller.stream;
+  }
+
+  @override
+  Future<void> unload() async {
+    checkNotDisposed();
+    if (_workerPort == null) return;
+    await _request('unload', const {}, context: 'Model unload failed');
+    markAsUnloaded();
+  }
+
+  @override
+  Future<void> clean({bool resetConversations = true}) async {
+    checkInitialized();
+    await _request('clean', {
+      'resetConversations': resetConversations,
+    }, context: 'clean() failed');
+  }
+
+  // Bridges worker SendPort messages into a stream of events. The terminal
+  // event carries the generation's finish reason and backend perf counters.
+  // No generation tracking — callers manage isGenerating state.
+  Stream<GenerationEvent> _rawWorkerStream(Map<String, dynamic> message) {
+    final controller = StreamController<GenerationEvent>();
+    final replyPort = ReceivePort();
+    var finished = false;
 
     _workerPort!.send({...message, 'streamPort': replyPort.sendPort});
 
@@ -251,14 +557,38 @@ class LlmModelIsolated extends LlmModelBase {
       if (msg is! Map<String, dynamic>) return;
       switch (msg['type'] as String?) {
         case 'token':
-          if (!controller.isClosed) controller.add(msg['text'] as String);
+          if (!controller.isClosed) {
+            controller.add(
+              GenerationEvent(
+                text: msg['text'] as String? ?? '',
+                thinking: msg['thinking'] as String?,
+              ),
+            );
+          }
         case 'done':
-          replyPort.close();
-          if (!controller.isClosed) controller.close();
-        case 'error':
+          finished = true;
           replyPort.close();
           if (!controller.isClosed) {
-            controller.addError(Exception('Worker error: ${msg['message']}'));
+            controller.add(
+              GenerationEvent(
+                text: '',
+                isFinal: true,
+                finishReason: msg['finishReason'] as String?,
+                perf: (msg['perf'] as Map?)?.cast<String, dynamic>(),
+                toolCalls: [
+                  for (final call in (msg['toolCalls'] as List?) ?? const [])
+                    LlmToolCall.fromMap((call as Map).cast<String, dynamic>()),
+                ],
+              ),
+            );
+            controller.close();
+          }
+        case 'error':
+          finished = true;
+          replyPort.close();
+          if (!controller.isClosed) {
+            controller.addError(decodeError(msg, context: 'Worker error'));
+            controller.close();
           }
       }
     });
@@ -266,14 +596,17 @@ class LlmModelIsolated extends LlmModelBase {
     controller.onCancel = () {
       sub.cancel();
       replyPort.close();
-      _workerPort?.send({'type': 'cancel'});
+      // Only interrupt a generation that is still running: cancelGeneration()
+      // is engine-wide, so cancelling after a clean finish would abort an
+      // unrelated request when maxParallelSequences > 1.
+      if (!finished) _workerPort?.send({'type': 'cancel'});
     };
 
     return controller.stream;
   }
 
   // Wraps _rawWorkerStream with isGenerating tracking for sendPrompt().
-  Stream<String> _trackedStream(Map<String, dynamic> message) async* {
+  Stream<GenerationEvent> _trackedStream(Map<String, dynamic> message) async* {
     markGenerationStart();
     try {
       yield* _rawWorkerStream(message);
@@ -284,32 +617,56 @@ class LlmModelIsolated extends LlmModelBase {
 
   Map<String, dynamic> _buildMessage(
     String prompt, {
-    List<LlamaImageContent>? images,
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
   }) => {
     'type': 'generate',
     'prompt': prompt,
-    if (images != null && images.isNotEmpty) 'images': images,
+    if (systemPrompt != null) 'systemPrompt': systemPrompt,
+    if (attachments != null && attachments.isNotEmpty)
+      'attachments': attachments,
+    if (overrides != null) 'overrides': overrides,
   };
 
   @override
-  Stream<String> sendPrompt(String prompt, {List<LlamaImageContent>? images}) {
+  Stream<String> sendPrompt(
+    String prompt, {
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
+  }) {
     checkInitialized();
-    return _trackedStream(_buildMessage(prompt, images: images));
+    return _trackedStream(
+      _buildMessage(
+        prompt,
+        systemPrompt: systemPrompt,
+        attachments: attachments,
+        overrides: overrides,
+      ),
+    ).where((e) => !e.isFinal && e.text.isNotEmpty).map((e) => e.text);
   }
 
   @override
   Future<String> sendPromptComplete(
     String prompt, {
-    List<LlamaImageContent>? images,
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
   }) async {
     checkInitialized();
     markGenerationStart();
     try {
       final buffer = StringBuffer();
-      await for (final token in _rawWorkerStream(
-        _buildMessage(prompt, images: images),
+      await for (final event in _rawWorkerStream(
+        _buildMessage(
+          prompt,
+          systemPrompt: systemPrompt,
+          attachments: attachments,
+          overrides: overrides,
+        ),
       )) {
-        buffer.write(token);
+        buffer.write(event.text);
       }
       return buffer.toString();
     } finally {
@@ -320,7 +677,9 @@ class LlmModelIsolated extends LlmModelBase {
   @override
   Stream<StreamingChunk> sendPromptStream(
     String prompt, {
-    List<LlamaImageContent>? images,
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
   }) async* {
     checkInitialized();
 
@@ -329,12 +688,34 @@ class LlmModelIsolated extends LlmModelBase {
 
     markGenerationStart();
     try {
-      await for (final token in _rawWorkerStream(
-        _buildMessage(prompt, images: images),
+      await for (final event in _rawWorkerStream(
+        _buildMessage(
+          prompt,
+          systemPrompt: systemPrompt,
+          attachments: attachments,
+          overrides: overrides,
+        ),
       )) {
+        if (event.isFinal) {
+          yield StreamingChunk(
+            text: '',
+            metrics: finalMetrics(
+              perf: event.perf,
+              fallbackTokenCount: totalTokenCount,
+              startTime: startTime,
+              endTime: DateTime.now(),
+            ),
+            isFinal: true,
+            finishReason: event.finishReason,
+            toolCalls: event.toolCalls,
+          );
+          continue;
+        }
+
         totalTokenCount += 1;
         yield StreamingChunk(
-          text: token,
+          text: event.text,
+          thinking: event.thinking,
           metrics: PerformanceMetrics.fromGeneration(
             tokenCount: totalTokenCount,
             startTime: startTime,
@@ -343,32 +724,162 @@ class LlmModelIsolated extends LlmModelBase {
           isFinal: false,
         );
       }
-      yield StreamingChunk(
-        text: '',
-        metrics: PerformanceMetrics.fromGeneration(
-          tokenCount: totalTokenCount,
-          startTime: startTime,
-          endTime: DateTime.now(),
-        ),
-        isFinal: true,
-      );
     } finally {
       markGenerationEnd();
     }
   }
 
   @override
-  void dispose() {
-    _workerPort?.send({'type': 'dispose'});
+  Future<void> dispose() async {
+    final workerPort = _workerPort;
+    _workerPort = null;
+    // Cleared first so the exit notification this teardown is about to trigger
+    // is not reported to callers as a crash.
+    _workerExpectedAlive = false;
+
+    if (workerPort != null) {
+      // Wait for the worker to confirm llama.cpp released its handles before
+      // killing the isolate — killing mid-teardown races token release,
+      // worker shutdown and engine deletion.
+      final ackPort = ReceivePort();
+      workerPort.send({'type': 'dispose', 'replyPort': ackPort.sendPort});
+      try {
+        await ackPort.first.timeout(_disposeTimeout);
+      } catch (_) {
+        // A worker that is wedged or already gone must not block teardown.
+      } finally {
+        ackPort.close();
+      }
+    }
+
     _isolate?.kill(priority: Isolate.beforeNextEvent);
     _isolate = null;
-    _workerPort = null;
+
+    _exitPort?.close();
+    _errorPort?.close();
+    _exitPort = null;
+    _errorPort = null;
+    _workerDeath = null;
+
     markAsDisposed();
   }
 
-  @override
-  void clean() {
+  /// Round-trips one non-streaming engine call through the worker.
+  Future<Object?> _call(String method, [Map<String, dynamic> args = const {}]) {
     checkInitialized();
-    // create() is stateless in llamadart — no context to reset
+    final workerPort = _workerPort;
+    if (workerPort == null) {
+      throw LlamaStateException(
+        'Engine call "$method" failed',
+        'the inference worker is not running',
+      );
+    }
+    final replyPort = ReceivePort();
+    workerPort.send({
+      'type': 'call',
+      'method': method,
+      'args': args,
+      'replyPort': replyPort.sendPort,
+    });
+    return Future.any([replyPort.first, _onWorkerDeath]).then((
+      dynamic response,
+    ) {
+      replyPort.close();
+      final map = (response as Map).cast<String, dynamic>();
+      if (map['type'] == 'error') {
+        throw decodeError(map, context: 'Engine call "$method" failed');
+      }
+      return map['value'];
+    });
   }
+
+  @override
+  Future<List<int>> tokenize(String text, {bool addSpecial = true}) async =>
+      ((await _call('tokenize', {'text': text, 'addSpecial': addSpecial}))
+              as List)
+          .cast<int>();
+
+  @override
+  Future<String> detokenize(List<int> tokens, {bool special = false}) async =>
+      (await _call('detokenize', {'tokens': tokens, 'special': special}))
+          as String;
+
+  @override
+  Future<int> countTokens(String text) async =>
+      (await _call('countTokens', {'text': text})) as int;
+
+  @override
+  Future<int> contextSize() async => (await _call('contextSize')) as int;
+
+  @override
+  Future<Map<String, String>> metadata() async =>
+      ((await _call('metadata')) as Map).cast<String, String>();
+
+  @override
+  Future<bool> get supportsStatePersistence async =>
+      (await _call('supportsStatePersistence')) as bool;
+
+  @override
+  Future<bool> saveState(String path, {required List<int> tokens}) async =>
+      (await _call('saveState', {'path': path, 'tokens': tokens})) as bool;
+
+  @override
+  Future<List<int>> loadState(String path, {int? tokenCapacity}) async =>
+      ((await _call('loadState', {
+                'path': path,
+                if (tokenCapacity != null) 'tokenCapacity': tokenCapacity,
+              }))
+              as List)
+          .cast<int>();
+
+  @override
+  Future<void> setLora(String path, {double scale = 1.0}) async =>
+      _call('setLora', {'path': path, 'scale': scale});
+
+  @override
+  Future<void> removeLora(String path) async =>
+      _call('removeLora', {'path': path});
+
+  @override
+  Future<void> clearLoras() async => _call('clearLoras');
+
+  @override
+  Future<ModelDiagnostics> diagnostics() async =>
+      (await _call('diagnostics')) as ModelDiagnostics;
+}
+
+/// Reaches the [SessionRegistry] living in the worker isolate.
+class _IsolateConversationTransport implements ConversationTransport {
+  final LlmModelIsolated _model;
+
+  _IsolateConversationTransport(this._model);
+
+  @override
+  Stream<GenerationEvent> turn(String id, TurnRequest request) =>
+      _model._sessionTurn(id, request);
+
+  @override
+  Future<List<LlmChatMessage>> history(String id) async =>
+      ((await _model._sessionCall('history', {'id': id})) as List)
+          .cast<LlmChatMessage>();
+
+  @override
+  Future<void> restore(String id, List<LlmChatMessage> messages) async =>
+      _model._sessionCall('restore', {'id': id, 'history': messages});
+
+  @override
+  Future<void> reset(String id, {bool keepSystemPrompt = true}) async => _model
+      ._sessionCall('reset', {'id': id, 'keepSystemPrompt': keepSystemPrompt});
+
+  @override
+  Future<void> setSystemPrompt(String id, String? value) async =>
+      _model._sessionCall('setSystemPrompt', {'id': id, 'value': value});
+
+  @override
+  Future<void> cancel(String id) async =>
+      _model._sessionCall('cancel', {'id': id});
+
+  @override
+  Future<void> close(String id) async =>
+      _model._sessionCall('close', {'id': id});
 }

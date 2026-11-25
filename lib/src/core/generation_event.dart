@@ -1,0 +1,42 @@
+// lib/src/core/generation_event.dart
+
+import 'chat_message.dart';
+import 'tools.dart';
+
+/// One message from a worker isolate: either a token, or the terminal event
+/// carrying the generation's finish reason and llama.cpp's perf counters.
+///
+/// Internal to the plugin — not exported from `mt_llmkit.dart`.
+class GenerationEvent {
+  final String text;
+
+  /// Reasoning text, when the model emitted a thinking block. A token event
+  /// carries either [text] or [thinking], never both.
+  final String? thinking;
+
+  final bool isFinal;
+  final String? finishReason;
+  final Map<String, dynamic>? perf;
+
+  /// Completed tool calls, on the terminal event only.
+  final List<LlmToolCall> toolCalls;
+
+  /// Conversation turns only: whether the prompt fitted the context window
+  /// after trimming.
+  final bool fitContext;
+
+  /// Conversation turns only: history permanently deleted to make the prompt
+  /// fit.
+  final List<LlmChatMessage> dropped;
+
+  const GenerationEvent({
+    required this.text,
+    this.thinking,
+    this.isFinal = false,
+    this.finishReason,
+    this.perf,
+    this.toolCalls = const [],
+    this.fitContext = true,
+    this.dropped = const [],
+  });
+}

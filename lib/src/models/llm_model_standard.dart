@@ -4,98 +4,173 @@ import 'dart:io';
 
 import 'package:llamadart/llamadart.dart';
 
+import '../core/backend_perf.dart';
+import '../core/chat_message.dart';
+import '../core/conversation.dart';
+import '../core/conversation_types.dart';
+import '../core/engine_rpc.dart';
+import '../core/generation_overrides.dart';
 import '../core/llm_config.dart';
+import '../core/model_diagnostics.dart';
+import '../core/model_params_builder.dart';
+import '../core/session_ops.dart';
 import '../core/performance_metrics.dart';
 import '../core/streaming_result.dart';
+import '../core/tools.dart';
 import 'llm_model_base.dart';
 
 class LlmModelStandard extends LlmModelBase {
+  @override
   final LlmConfig config;
   LlamaEngine? _engine;
 
+  // llama.cpp has no "forget the prompt cache now" call; the next generation
+  // runs with `reusePromptPrefix: false`, which clears context memory and the
+  // cached prompt tokens before ingesting. See [clean].
+  bool _pendingPrefixInvalidation = false;
+
+  SessionRegistry? _sessions;
+  int _nextSessionId = 0;
+
+  // Conversation turns and one-shot prompts share this queue: llama.cpp chat
+  // generation runs on one context, so they cannot overlap.
+  Future<void> _turnQueue = Future<void>.value();
+
+  SessionRegistry get _registry => _sessions ??= SessionRegistry(
+    createSession: (options) => RealChatSession(
+      ChatSession(
+        _engine!,
+        maxContextTokens: options.maxContextTokens,
+        systemPrompt: options.systemPrompt,
+      ),
+    ),
+    baseParams: () => buildGenerationParams(config),
+    enableThinkingDefault: () => config.enableThinkingDefault,
+    readPerf: () => readBackendPerf(_engine!),
+    serialize: (action) => _turnQueue = _turnQueue.then((_) => action()),
+  );
+
+  @override
+  Future<Conversation> startConversation({
+    String? systemPrompt,
+    int? maxContextTokens,
+    List<LlmChatMessage>? history,
+    ContextOverflowPolicy overflowPolicy = ContextOverflowPolicy.allow,
+    bool keepThinkingInHistory = false,
+  }) async {
+    checkInitialized();
+    final id = 's${_nextSessionId++}';
+    _registry.open(
+      id,
+      SessionOptions(
+        systemPrompt: systemPrompt,
+        maxContextTokens: maxContextTokens,
+        overflowPolicy: overflowPolicy,
+        keepThinkingInHistory: keepThinkingInHistory,
+      ),
+      history: history,
+    );
+    return Conversation(id, LocalConversationTransport(_registry));
+  }
+
   LlmModelStandard(this.config);
 
-  ModelParams get _modelParams => ModelParams(
-    contextSize: config.nCtxDefault,
-    gpuLayers: config.nGpuLayersDefault,
-    batchSize: config.nBatchDefault,
-    numberOfThreads: config.nThreadsDefault,
-    numberOfThreadsBatch: config.numberOfThreadsBatchDefault,
-    microBatchSize: config.microBatchSizeDefault,
-    maxParallelSequences: config.maxParallelSequencesDefault,
-    loras: config.lorasDefault,
-    chatTemplate: config.chatTemplate,
-    preferredBackend: config.gpuBackendDefault,
-  );
-
-  GenerationParams get _genParams => GenerationParams(
-    maxTokens: config.nPredictDefault,
-    temp: config.tempDefault,
-    topK: config.topKDefault,
-    topP: config.topPDefault,
-    minP: config.minPDefault,
-    penalty: config.penaltyRepeatDefault,
-    seed: config.seed,
-    stopSequences: config.stopSequencesDefault,
-    grammar: config.grammar,
-    grammarLazy: config.grammarLazyDefault,
-    grammarTriggers: config.grammarTriggersDefault,
-    preservedTokens: config.preservedTokensDefault,
-    grammarRoot: config.grammarRootDefault,
-    reusePromptPrefix: config.reusePromptPrefixDefault,
-    streamBatchTokenThreshold: config.streamBatchTokenThresholdDefault,
-    streamBatchByteThreshold: config.streamBatchByteThresholdDefault,
-  );
-
-  LlamaChatMessage _buildMessage(
+  Stream<LlamaCompletionChunk> _create(
     String prompt,
-    List<LlamaImageContent>? images,
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
   ) {
-    if (images != null && images.isNotEmpty) {
-      return LlamaChatMessage.withContent(
-        role: LlamaChatRole.user,
-        content: [LlamaTextContent(prompt), ...images],
-      );
+    var base = buildGenerationParams(config);
+    if (_pendingPrefixInvalidation) {
+      base = base.copyWith(reusePromptPrefix: false);
+      _pendingPrefixInvalidation = false;
     }
-    return LlamaChatMessage.fromText(role: LlamaChatRole.user, text: prompt);
+    return _engine!.create(
+      buildMessages(
+        prompt,
+        systemPrompt: systemPrompt,
+        attachments: attachments,
+      ),
+      params: overrides?.applyTo(base) ?? base,
+      enableThinking: overrides?.enableThinking ?? config.enableThinkingDefault,
+      tools: overrides?.tools?.map((t) => t.toToolDefinition()).toList(),
+      toolChoice: overrides?.toolChoice,
+      parallelToolCalls: overrides?.parallelToolCalls ?? false,
+      responseFormat: overrides?.responseFormat,
+    );
   }
 
   @override
   Future<void> loadModel(String localPath) async {
     checkNotDisposed();
+    config.validate();
 
     if (!File(localPath).existsSync()) {
       throw FileSystemException('File not found', localPath);
     }
 
-    _engine = LlamaEngine(LlamaBackend());
-    await _engine!.loadModel(localPath, modelParams: _modelParams);
+    // Reuse the engine across loads: llamadart supports load → unload → load
+    // on one instance, and skipping backend re-initialization is the whole
+    // point of unload().
+    final engine = _engine ??= LlamaEngine(LlamaBackend());
+    if (engine.isReady) await engine.unloadModel();
+
+    await engine.loadModel(localPath, modelParams: buildModelParams(config));
 
     if (config.mmprojPath != null) {
-      await _engine!.loadMultimodalProjector(config.mmprojPath!);
+      await engine.loadMultimodalProjector(config.mmprojPath!);
     }
 
     markAsInitialized();
   }
 
   @override
-  Stream<String> sendPrompt(String prompt, {List<LlamaImageContent>? images}) {
+  Future<void> unload() async {
+    checkNotDisposed();
+    final engine = _engine;
+    if (engine == null || !engine.isReady) return;
+    _sessions?.closeAll();
+    await engine.unloadModel();
+    _pendingPrefixInvalidation = false;
+    markAsUnloaded();
+  }
+
+  @override
+  Future<void> clean({bool resetConversations = true}) async {
     checkInitialized();
-    return _bufferedStream(prompt, images: images);
+    _pendingPrefixInvalidation = true;
+    if (resetConversations) _sessions?.resetAll();
+  }
+
+  @override
+  Stream<String> sendPrompt(
+    String prompt, {
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
+  }) {
+    checkInitialized();
+    return _bufferedStream(prompt, systemPrompt, attachments, overrides);
   }
 
   @override
   Future<String> sendPromptComplete(
     String prompt, {
-    List<LlamaImageContent>? images,
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
   }) async {
     checkInitialized();
     markGenerationStart();
     try {
       final buffer = StringBuffer();
-      await for (final chunk in _engine!.create([
-        _buildMessage(prompt, images),
-      ], params: _genParams)) {
+      await for (final chunk in _create(
+        prompt,
+        systemPrompt,
+        attachments,
+        overrides,
+      )) {
         final text = chunk.choices.firstOrNull?.delta.content;
         if (text != null) buffer.write(text);
       }
@@ -106,9 +181,11 @@ class LlmModelStandard extends LlmModelBase {
   }
 
   Stream<String> _bufferedStream(
-    String prompt, {
-    List<LlamaImageContent>? images,
-  }) async* {
+    String prompt,
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
+  ) async* {
     if (_engine == null) return;
 
     final buffer = StringBuffer();
@@ -117,9 +194,12 @@ class LlmModelStandard extends LlmModelBase {
 
     markGenerationStart();
     try {
-      await for (final chunk in _engine!.create([
-        _buildMessage(prompt, images),
-      ], params: _genParams)) {
+      await for (final chunk in _create(
+        prompt,
+        systemPrompt,
+        attachments,
+        overrides,
+      )) {
         final text = chunk.choices.firstOrNull?.delta.content;
         if (text == null) continue;
 
@@ -146,7 +226,9 @@ class LlmModelStandard extends LlmModelBase {
   @override
   Stream<StreamingChunk> sendPromptStream(
     String prompt, {
-    List<LlamaImageContent>? images,
+    String? systemPrompt,
+    List<LlamaContentPart>? attachments,
+    GenerationOverrides? overrides,
   }) async* {
     checkInitialized();
 
@@ -155,33 +237,64 @@ class LlmModelStandard extends LlmModelBase {
 
     markGenerationStart();
     try {
-      await for (final chunk in _engine!.create([
-        _buildMessage(prompt, images),
-      ], params: _genParams)) {
-        final text = chunk.choices.firstOrNull?.delta.content;
-        if (text == null) continue;
+      String? finishReason;
+      final toolCalls = ToolCallAccumulator();
 
-        totalTokenCount += 1;
+      await for (final chunk in _create(
+        prompt,
+        systemPrompt,
+        attachments,
+        overrides,
+      )) {
+        final choice = chunk.choices.firstOrNull;
+        finishReason = choice?.finishReason ?? finishReason;
 
-        yield StreamingChunk(
-          text: text,
-          metrics: PerformanceMetrics.fromGeneration(
-            tokenCount: totalTokenCount,
-            startTime: startTime,
-            endTime: DateTime.now(),
-          ),
-          isFinal: false,
-        );
+        final deltas = choice?.delta.toolCalls;
+        if (deltas != null) toolCalls.add(deltas);
+
+        // Text and reasoning are emitted as separate chunks, matching the
+        // isolate backend, so a chunk carries one channel or the other.
+        final text = choice?.delta.content;
+        if (text != null) {
+          totalTokenCount += 1;
+          yield StreamingChunk(
+            text: text,
+            metrics: PerformanceMetrics.fromGeneration(
+              tokenCount: totalTokenCount,
+              startTime: startTime,
+              endTime: DateTime.now(),
+            ),
+            isFinal: false,
+          );
+        }
+
+        final thinking = choice?.delta.thinking;
+        if (thinking != null) {
+          totalTokenCount += 1;
+          yield StreamingChunk(
+            text: '',
+            thinking: thinking,
+            metrics: PerformanceMetrics.fromGeneration(
+              tokenCount: totalTokenCount,
+              startTime: startTime,
+              endTime: DateTime.now(),
+            ),
+            isFinal: false,
+          );
+        }
       }
 
       yield StreamingChunk(
         text: '',
-        metrics: PerformanceMetrics.fromGeneration(
-          tokenCount: totalTokenCount,
+        metrics: finalMetrics(
+          perf: await readBackendPerf(_engine!),
+          fallbackTokenCount: totalTokenCount,
           startTime: startTime,
           endTime: DateTime.now(),
         ),
         isFinal: true,
+        finishReason: finishReason,
+        toolCalls: toolCalls.build(),
       );
     } finally {
       markGenerationEnd();
@@ -189,15 +302,70 @@ class LlmModelStandard extends LlmModelBase {
   }
 
   @override
-  void dispose() {
-    _engine?.dispose();
+  Future<void> dispose() async {
+    _sessions?.closeAll();
+    final engine = _engine;
     _engine = null;
+    await engine?.dispose();
     markAsDisposed();
   }
 
-  @override
-  void clean() {
+  Future<Object?> _call(String method, [Map<String, dynamic> args = const {}]) {
     checkInitialized();
-    // create() is stateless in llamadart — no context to reset
+    return dispatchEngineCall(_engine!, method, args);
   }
+
+  @override
+  Future<List<int>> tokenize(String text, {bool addSpecial = true}) async =>
+      ((await _call('tokenize', {'text': text, 'addSpecial': addSpecial}))
+              as List)
+          .cast<int>();
+
+  @override
+  Future<String> detokenize(List<int> tokens, {bool special = false}) async =>
+      (await _call('detokenize', {'tokens': tokens, 'special': special}))
+          as String;
+
+  @override
+  Future<int> countTokens(String text) async =>
+      (await _call('countTokens', {'text': text})) as int;
+
+  @override
+  Future<int> contextSize() async => (await _call('contextSize')) as int;
+
+  @override
+  Future<Map<String, String>> metadata() async =>
+      ((await _call('metadata')) as Map).cast<String, String>();
+
+  @override
+  Future<bool> get supportsStatePersistence async =>
+      (await _call('supportsStatePersistence')) as bool;
+
+  @override
+  Future<bool> saveState(String path, {required List<int> tokens}) async =>
+      (await _call('saveState', {'path': path, 'tokens': tokens})) as bool;
+
+  @override
+  Future<List<int>> loadState(String path, {int? tokenCapacity}) async =>
+      ((await _call('loadState', {
+                'path': path,
+                if (tokenCapacity != null) 'tokenCapacity': tokenCapacity,
+              }))
+              as List)
+          .cast<int>();
+
+  @override
+  Future<void> setLora(String path, {double scale = 1.0}) async =>
+      _call('setLora', {'path': path, 'scale': scale});
+
+  @override
+  Future<void> removeLora(String path) async =>
+      _call('removeLora', {'path': path});
+
+  @override
+  Future<void> clearLoras() async => _call('clearLoras');
+
+  @override
+  Future<ModelDiagnostics> diagnostics() async =>
+      (await _call('diagnostics')) as ModelDiagnostics;
 }

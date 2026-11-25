@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:mt_llmkit/mt_llmkit.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'conversation_page.dart';
 import 'rag_page.dart';
 import 'rest_api_tab.dart';
 import 'vision_page.dart';
@@ -43,13 +44,23 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> {
   int _selectedIndex = 0;
 
-  static const _pages = [LlmDemoPage(), VisionPage(), RagPage()];
+  static const _pages = [
+    LlmDemoPage(),
+    ConversationPage(),
+    VisionPage(),
+    RagPage(),
+  ];
 
   static const _labels = [
     NavigationDestination(
       icon: Icon(Icons.chat_outlined),
       selectedIcon: Icon(Icons.chat),
       label: 'LLM',
+    ),
+    NavigationDestination(
+      icon: Icon(Icons.forum_outlined),
+      selectedIcon: Icon(Icons.forum),
+      label: 'Chat',
     ),
     NavigationDestination(
       icon: Icon(Icons.image_outlined),
@@ -69,9 +80,10 @@ class _MainPageState extends State<MainPage> {
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         title: Text(switch (_selectedIndex) {
-          0 => 'llmcpp — LLM Demo',
-          1 => 'llmcpp — Vision Demo',
-          _ => 'llmcpp — RAG Demo',
+          0 => 'mt_llmkit — LLM Demo',
+          1 => 'mt_llmkit — Conversation Demo',
+          2 => 'mt_llmkit — Vision Demo',
+          _ => 'mt_llmkit — RAG Demo',
         }),
       ),
       body: IndexedStack(index: _selectedIndex, children: _pages),
@@ -107,7 +119,9 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
   bool _isGenerating = false;
 
   final StringBuffer _outputBuffer = StringBuffer();
+  final StringBuffer _thinkingBuffer = StringBuffer();
   String _output = '';
+  String _thinking = '';
   String _metricsText = '';
   String _statusMessage = '';
 
@@ -118,6 +132,7 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
 
   static const _modelUrl =
       'https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf';
+  // 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf';
 
   @override
   void initState() {
@@ -128,7 +143,8 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
   @override
   void dispose() {
     _streamSubscription?.cancel();
-    _ggufPlugin?.dispose();
+    // Widget teardown is synchronous; let the model release itself.
+    unawaited(_ggufPlugin?.dispose() ?? Future<void>.value());
     _promptController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -198,16 +214,26 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
   }
 
   Future<bool> _initializeGguf() async {
-    _ggufPlugin?.dispose();
+    final previous = _ggufPlugin;
     _ggufPlugin = null;
+    await previous?.dispose();
 
     try {
       _ggufPlugin = LocalModel(
         backend: ModelBackend.inProcess,
         config: LlmConfig(
           // topP: 0.1,
-          temp: 0.7,
-          nPredict: 120,
+          // temp: 0.3,
+          temp: 0,
+          topK: 1,
+          topP: 1,
+          penaltyRepeat: 1.0,
+          //
+          nPredict: 2048,
+          nCtx: 2048,
+          gpuBackend: GpuBackend.cpu,
+          nGpuLayers: 0,
+          nBatch: 512,
           // nBatch: 128,
           nThreads: 6,
           // nCtx: 1024,
@@ -227,9 +253,11 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
     setState(() {
       _isGenerating = true;
       _output = '';
+      _thinking = '';
       _metricsText = '';
       _statusMessage = 'Initializing...';
       _outputBuffer.clear();
+      _thinkingBuffer.clear();
     });
 
     await _sendGgufPrompt();
@@ -247,7 +275,10 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
     setState(() => _statusMessage = 'Generating...');
 
     _streamSubscription = _ggufPlugin!
-        .sendPromptStream(_promptController.text)
+        .sendPromptStream(
+          _promptController.text,
+          systemPrompt: 'You are a concise, helpful assistant.',
+        )
         .listen(
           (chunk) {
             setState(() {
@@ -255,14 +286,21 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
                 _outputBuffer.write(chunk.text);
                 _output = _outputBuffer.toString();
               }
+              if (chunk.thinking != null) {
+                _thinkingBuffer.write(chunk.thinking);
+                _thinking = _thinkingBuffer.toString();
+              }
               if (chunk.metrics != null) {
                 final m = chunk.metrics!;
                 _metricsText =
-                    'Tokens: ${m.tokensGenerated} │ ${m.tokensPerSecond.toStringAsFixed(1)} t/s │ ${m.msPerToken.toStringAsFixed(0)} ms/token';
+                    'Tokens: ${m.tokensGenerated} │ ${m.tokensPerSecond.toStringAsFixed(1)} t/s │ ${m.msPerToken.toStringAsFixed(0)} ms/token'
+                    '${m.isExact ? '' : ' (est.)'}';
               }
               if (chunk.isFinal) {
                 _isGenerating = false;
-                _statusMessage = 'Done';
+                _statusMessage = chunk.isTruncated
+                    ? 'Stopped: token budget exhausted'
+                    : 'Done';
               }
             });
           },
@@ -313,11 +351,12 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
             ],
             selected: {_selectedProvider},
             onSelectionChanged: (selected) {
+              final previous = _ggufPlugin;
               setState(() {
                 _selectedProvider = selected.first;
-                _ggufPlugin?.dispose();
                 _ggufPlugin = null;
               });
+              unawaited(previous?.dispose() ?? Future<void>.value());
             },
           ),
         ),
@@ -363,6 +402,30 @@ class _LlmDemoPageState extends State<LlmDemoPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Reasoning models emit thinking on its own channel; it
+                  // never mixes into chunk.text.
+                  if (_thinking.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: ExpansionTile(
+                        title: const Text(
+                          'Thinking',
+                          style: TextStyle(fontSize: 13),
+                        ),
+                        tilePadding: EdgeInsets.zero,
+                        childrenPadding: EdgeInsets.zero,
+                        children: [
+                          SelectableText(
+                            _thinking,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontStyle: FontStyle.italic,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   if (_output.isNotEmpty)
                     SelectableText(
                       _output,
