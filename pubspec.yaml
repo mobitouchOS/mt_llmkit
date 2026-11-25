@@ -1,5 +1,5 @@
 name: mt_llmkit
-version: 0.0.1-beta.1
+version: 0.1.0-beta.1
 description: A Flutter plugin for running Large Language Models locally on Android and iOS via llama.cpp, with real-time streaming inference and performance metrics.
 homepage: https://github.com/mobitouchOS/mt_llmkit
 repository: https://github.com/mobitouchOS/mt_llmkit

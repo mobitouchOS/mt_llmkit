@@ -361,9 +361,7 @@ class LlmModelIsolated extends LlmModelBase {
     final exitPort = ReceivePort()
       ..listen((_) => _reportWorkerDeath('the isolate exited'));
     final errorPort = ReceivePort()
-      ..listen(
-        (dynamic error) => _reportWorkerDeath('$error'),
-      );
+      ..listen((dynamic error) => _reportWorkerDeath('$error'));
     _exitPort = exitPort;
     _errorPort = errorPort;
     _workerExpectedAlive = true;

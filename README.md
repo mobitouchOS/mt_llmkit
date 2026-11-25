@@ -52,7 +52,7 @@ Add to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  mt_llmkit: ^0.0.1-beta.1
+  mt_llmkit: ^0.1.0-beta.1
 
   # iOS/macOS only: links llama.cpp's Apple XCFramework through Swift Package Manager.
   # Must be declared here, in the *app's* pubspec — llamadart's build hook reads it.

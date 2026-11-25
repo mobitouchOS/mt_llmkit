@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'mt_llmkit'
-  s.version          = '0.0.1'
+  s.version          = '0.1.0'
   s.summary          = 'Run Large Language Models locally on iOS with Flutter.'
   s.description      = <<-DESC
 mt_llmkit enables running Large Language Models locally on iOS using llama.cpp. This package provides real-time streaming inference, performance metrics, cloud AI chat providers, and a fully local RAG pipeline — all from Flutter.
