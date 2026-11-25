@@ -7,6 +7,17 @@
 
 # The following line activates a set of recommended lints for Flutter apps,
 # packages, and plugins designed to encourage good coding practices.
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+    - web/**
+  errors:
+    # Newer Flutter stable deprecates package:flutter/material.dart in favour of
+    # package:material_ui. The example keeps material.dart so it still builds on
+    # the plugin's minimum Flutter (3.38); CI runs the latest stable.
+    deprecated_member_use: ignore
 include: package:flutter_lints/flutter.yaml
 
 linter:
