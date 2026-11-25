@@ -229,7 +229,7 @@ Future<void> _llamaIsolateWorkerMain(Map<String, dynamic> args) async {
                     genSubscription = null;
                     streamPort.send({
                       'type': 'done',
-                      if (finishReason != null) 'finishReason': finishReason,
+                      'finishReason': ?finishReason,
                       'perf': await readBackendPerf(engine),
                       if (!toolCalls.isEmpty)
                         'toolCalls': toolCalls
@@ -426,7 +426,7 @@ class LlmModelIsolated extends LlmModelBase {
         overflowPolicy: overflowPolicy,
         keepThinkingInHistory: keepThinkingInHistory,
       ),
-      if (history != null) 'history': history,
+      'history': ?history,
     });
     return Conversation(id, _IsolateConversationTransport(this));
   }
@@ -623,10 +623,10 @@ class LlmModelIsolated extends LlmModelBase {
   }) => {
     'type': 'generate',
     'prompt': prompt,
-    if (systemPrompt != null) 'systemPrompt': systemPrompt,
+    'systemPrompt': ?systemPrompt,
     if (attachments != null && attachments.isNotEmpty)
       'attachments': attachments,
-    if (overrides != null) 'overrides': overrides,
+    'overrides': ?overrides,
   };
 
   @override
@@ -827,7 +827,7 @@ class LlmModelIsolated extends LlmModelBase {
   Future<List<int>> loadState(String path, {int? tokenCapacity}) async =>
       ((await _call('loadState', {
                 'path': path,
-                if (tokenCapacity != null) 'tokenCapacity': tokenCapacity,
+                'tokenCapacity': ?tokenCapacity,
               }))
               as List)
           .cast<int>();

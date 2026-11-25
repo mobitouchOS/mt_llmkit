@@ -140,7 +140,7 @@ Future<void> _llamaRagWorkerMain(Map<String, dynamic> args) async {
                 genSubscription = null;
                 streamPort.send({
                   'type': 'done',
-                  if (finishReason != null) 'finishReason': finishReason,
+                  'finishReason': ?finishReason,
                   'perf': await readBackendPerf(genEngine),
                 });
               },
@@ -280,8 +280,8 @@ class _CoordPlugin implements LlmInterface {
     _workerPort.send({
       'type': 'generate',
       'prompt': prompt,
-      if (systemPrompt != null) 'systemPrompt': systemPrompt,
-      if (overrides != null) 'overrides': overrides,
+      'systemPrompt': ?systemPrompt,
+      'overrides': ?overrides,
       'streamPort': replyPort.sendPort,
     });
 

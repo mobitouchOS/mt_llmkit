@@ -349,7 +349,7 @@ class LlmModelStandard extends LlmModelBase {
   Future<List<int>> loadState(String path, {int? tokenCapacity}) async =>
       ((await _call('loadState', {
                 'path': path,
-                if (tokenCapacity != null) 'tokenCapacity': tokenCapacity,
+                'tokenCapacity': ?tokenCapacity,
               }))
               as List)
           .cast<int>();
